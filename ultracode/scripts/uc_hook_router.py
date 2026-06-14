@@ -43,12 +43,12 @@ def emit(obj: dict[str, Any]) -> int:
 
 
 def additional_context(event: str, text: str) -> dict[str, Any]:
-    # Codex reads `additionalContext` at the TOP LEVEL of the hook's stdout JSON.
-    # The nested `hookSpecificOutput` block is the Claude Code shape, kept here only
-    # for cross-tool compatibility; hosts ignore output keys they don't recognize.
+    # Verified against Codex's embedded hook-output JSON schema (0.136): the
+    # <event>.command.output wire is additionalProperties:false, so `additionalContext`
+    # must sit INSIDE `hookSpecificOutput` with the matching `hookEventName` const —
+    # NOT at the top level. A stray top-level key is rejected as invalid hook output.
     return {
         "continue": True,
-        "additionalContext": text,
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext": text,
@@ -57,11 +57,9 @@ def additional_context(event: str, text: str) -> dict[str, Any]:
 
 
 def deny_pretool(reason: str) -> dict[str, Any]:
-    # Codex expects `permissionDecision` / `permissionDecisionReason` at the TOP
-    # LEVEL for PreToolUse. The hookSpecificOutput wrapper is Claude-compatibility.
+    # PreToolUseHookSpecificOutputWire (additionalProperties:false): permissionDecision
+    # ("allow"|"deny"|"ask") and permissionDecisionReason go INSIDE hookSpecificOutput.
     return {
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",

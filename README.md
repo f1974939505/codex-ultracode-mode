@@ -46,7 +46,7 @@ After installing hooks, open Codex and run:
 
 Review and trust the newly installed hook definitions. Codex requires hook trust review for non-managed command hooks.
 
-> Verified on Codex 0.136.0: hooks run in the interactive `codex` TUI after `/hooks` trust. They were **not** observed firing under non-interactive `codex exec` (even with `--full-auto --dangerously-bypass-hook-trust`). Treat hooks as an interactive-session guardrail; the skill, routing scripts, custom agents, and profile all work without them. The hook router emits Codex-native top-level `permissionDecision` / `additionalContext` (and keeps the Claude `hookSpecificOutput` block for cross-tool compatibility).
+> Verified on Codex 0.136.0: hooks run in the interactive `codex` TUI after `/hooks` trust. They were **not** observed firing under non-interactive `codex exec` (even with `--full-auto --dangerously-bypass-hook-trust`). Treat hooks as an interactive-session guardrail; the skill, routing scripts, custom agents, and profile all work without them. The hook router emits Codex's `hookSpecificOutput` wrapper shape (`permissionDecision`/`permissionDecisionReason` for PreToolUse, `additionalContext` for UserPromptSubmit/SubagentStart, `decision`/`reason` for Stop), matching Codex's `additionalProperties:false` hook-output schema.
 
 For project-local install:
 

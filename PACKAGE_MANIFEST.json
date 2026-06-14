@@ -1,7 +1,7 @@
 {
   "name": "ultracode-dynamic-workflow-codex",
   "version": "3.1.0",
-  "created_at_utc": "2026-06-14T07:58:08.562627+00:00",
+  "created_at_utc": "2026-06-14T08:15:26.131766+00:00",
   "skill_name": "ultracode",
   "activation": "$ultracode only",
   "notes": "PACKAGE_MANIFEST.json excludes itself from the file hash list.",
@@ -17,8 +17,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 11060,
-      "sha256": "4640d286dd13cec61ef1feb6b3915c9fc4ccd7e6ce5d2f94823685bf0ca379c6"
+      "bytes": 11175,
+      "sha256": "d48d691e8916df8da5d01f63b80aa879901ee5fa87d6287158e8341571a478e2"
     },
     {
       "path": "agents/ultracode_adversary.toml",
@@ -222,8 +222,8 @@
     },
     {
       "path": "ultracode/scripts/uc_hook_router.py",
-      "bytes": 13794,
-      "sha256": "e833fe6eecdde9bac4ef3d9c1618e08994a2ace80be365d4a3b0ee942906e7a9"
+      "bytes": 13776,
+      "sha256": "83698edeb43a38cd31b79054bde8b6621a54d6f15c980897755c7864425db470"
     },
     {
       "path": "ultracode/scripts/uc_merge_results.py",
