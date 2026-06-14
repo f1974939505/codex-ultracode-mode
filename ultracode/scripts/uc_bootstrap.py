@@ -198,29 +198,29 @@ def create_work_items(groups: list[dict[str, Any]], mode: str, max_workers: int)
             "id": "docs-constraints",
             "role": "ultracode_doc_mapper",
             "path": "AGENTS.md README* docs/ config files",
-            "objective": "Map project instructions, constraints, docs, generated-file rules, and conflict-resolution priorities.",
-            "expected_output": "JSON worker report with constraints and evidence.",
+            "objective": "LANE: docs/config truth-sources only. Map instructions, constraints, generated-file rules, conflict-resolution priorities, and doc-vs-doc / doc-vs-config contradictions. Do NOT audit source-code behavior, security, or tests (other roles own those).",
+            "expected_output": "JSON worker report; verdict=not-applicable.",
         },
         {
             "id": "test-build-map",
             "role": "ultracode_test_mapper",
             "path": "test/build/CI files",
-            "objective": "Identify reliable verification commands, fixture setup, and fragile or expensive checks.",
-            "expected_output": "JSON worker report with commands and risk notes.",
+            "objective": "LANE: verification maturity only. Identify reliable verification commands, CI, fixtures, eval/QA harnesses, and fragile/expensive checks. Do NOT read API/app source to make auth/security claims or restate the architecture verdict (defer to reviewer/mapper).",
+            "expected_output": "JSON worker report; verdict=not-applicable.",
         },
         {
             "id": "architecture-map",
             "role": "ultracode_mapper",
             "path": "repo root and primary source dirs",
-            "objective": "Map entry points, core modules, data/control flow, and hidden coupling.",
-            "expected_output": "JSON worker report with architecture findings.",
+            "objective": "LANE: implemented capability via source code only. Map entry points, core modules, data/control flow, hidden coupling, real-vs-vaporware. Do NOT re-derive doc contradictions (doc_mapper) or security posture (reviewer).",
+            "expected_output": "JSON worker report; verdict=not-applicable.",
         },
         {
             "id": "risk-review",
             "role": "ultracode_reviewer",
-            "path": "entire planned scope",
-            "objective": "Find destructive operations, compatibility risks, security issues, generated-file hazards, and unverified assumptions.",
-            "expected_output": "JSON worker report with risks and severity.",
+            "path": "security/compliance/data-egress/IP surface",
+            "objective": "LANE: security, compliance, data-egress/privacy, IP, destructive-operation risk, and falsifying claims. This role SCORES: set verdict=pass|concerns|fail (status stays ok). Do NOT re-map architecture/docs already covered; cite them.",
+            "expected_output": "JSON worker report with severity-ranked findings; verdict carries the judgment.",
         },
         {
             "id": "adversarial-claim-check",
@@ -341,11 +341,13 @@ def write_spawn_prompt(run_dir: Path, items: list[dict[str, str]]) -> None:
         "Use Codex subagents explicitly. For small sets, spawn one subagent per high-value work item. For many similar rows, call `spawn_agents_on_csv` with `work_items.csv` (requires the experimental `enable_fanout` feature; if it is unavailable, spawn workers individually).\n\n",
         "Concurrency note: Codex caps concurrent subagents at `agents.max_threads` (default 6). The `ultracode-xhigh` profile raises this to 16; without that profile active, keep concurrent workers <= 6 or run the CSV in batches.\n\n",
         "Named-agent fallback: prefer invoking the role agent by name (e.g. `ultracode_mapper`). If your Codex surface cannot invoke a named custom agent, spawn a generic worker and PASTE the matching role instructions from the section below into its prompt so the role discipline is preserved.\n\n",
-        "Each worker must return one JSON object with keys: id, agent, status, summary, evidence, findings, changes, verification, recommendations, open_questions.\n\n",
+        "Each worker must return one JSON object with keys: id, agent, scope, status, verdict, summary, evidence, findings, changes, verification, recommendations, open_questions.\n\n",
+        "Two axes — keep them separate: `status` = execution only (ok | blocked | error: did you finish your assigned read?). `verdict` = your assessment of what you reviewed (pass | concerns | fail | not-applicable). Pure mappers/evidence-gatherers use verdict = not-applicable; only judging roles (reviewer, claim_checker, edge_tester, verifier, adversary) return pass/concerns/fail. Never encode a judgment in `status` (a completed-but-negative review is status=ok, verdict=fail).\n\n",
+        "Lane discipline: each worker stays strictly inside its assigned `path`/role lane and must NOT re-derive another role's findings — cite the owning role instead. This keeps a fan-out of N workers complementary rather than N near-duplicate audits.\n\n",
         "CSV path: `work_items.csv` inside this run directory.\n\n",
         "Suggested instruction template for CSV fan-out:\n\n",
         "```text\n",
-        "Review `{path}` for `{objective}` as `{role}`. Stay within the assigned scope. If the role name contains adversarial, claim, or edge, try to falsify the result rather than approve it. Return a single JSON object with keys: id, agent, status, summary, evidence, findings, changes, verification, recommendations, open_questions. Call report_agent_job_result exactly once.\n",
+        "Review `{path}` for `{objective}` as `{role}`. Stay within the assigned scope. If the role name contains adversarial, claim, or edge, try to falsify the result rather than approve it. Return a single JSON object with keys: id, agent, scope, status, verdict, summary, evidence, findings, changes, verification, recommendations, open_questions. Call report_agent_job_result exactly once.\n",
         "```\n\n",
         "## Work item summary\n",
     ]
@@ -436,8 +438,21 @@ def main(argv: list[str] | None = None) -> int:
     }
     run_id = make_run_id(args.task)
     run_dir = Path(args.out_dir).resolve() if args.out_dir else root / ".codex" / "ultracode" / "runs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "results").mkdir(exist_ok=True)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "results").mkdir(exist_ok=True)
+        _probe = run_dir / ".uc_write_probe"
+        _probe.write_text("ok", encoding="utf-8")
+        _probe.unlink()
+    except OSError as exc:
+        print(json.dumps({
+            "ok": False,
+            "error": "run-dir-not-writable",
+            "path": str(run_dir),
+            "hint": "The run directory is not writable (often a read-only sandbox). Re-run with escalated/approved file permissions, or pass a writable --out-dir.",
+            "detail": f"{type(exc).__name__}: {exc}",
+        }, ensure_ascii=False))
+        return 3
 
     items = create_work_items(groups, args.mode, max(4, args.max_workers))
     run_meta = {

@@ -321,7 +321,20 @@ def main(argv: list[str] | None = None) -> int:
     route = infer_route(args.task, files, root, commands, git)
     route_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-route")
     out_dir = Path(args.out_dir).resolve() if args.out_dir else root / ".codex" / "ultracode" / "runs" / route_id
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        _probe = out_dir / ".uc_write_probe"
+        _probe.write_text("ok", encoding="utf-8")
+        _probe.unlink()
+    except OSError as exc:
+        print(json.dumps({
+            "ok": False,
+            "error": "run-dir-not-writable",
+            "path": str(out_dir),
+            "hint": "The run directory is not writable (often a read-only sandbox). Re-run with escalated/approved file permissions, or pass a writable --out-dir.",
+            "detail": f"{type(exc).__name__}: {exc}",
+        }, ensure_ascii=False))
+        return 3
     route.update({
         "ok": True,
         "route_id": route_id,

@@ -273,6 +273,22 @@ def _gate_status(run_dir: Path | None) -> str | None:
         return None
 
 
+def _verification_skipped(run_dir: Path | None) -> bool:
+    """A read-only task (no code changed) or an environment where the verify scripts
+    cannot run can satisfy the completion gate by recording a DURABLE, explicit
+    justification — a non-empty verification_skip.json (or an ULTRACODE-VERIFICATION-SKIP
+    marker in ledger.md) — instead of executable verification/adversarial artifacts.
+    This prevents the gate from forcing such runs back into scripts that would hang."""
+    if not run_dir:
+        return False
+    if _nonempty(run_dir / "verification_skip.json"):
+        return True
+    try:
+        return "ULTRACODE-VERIFICATION-SKIP" in (run_dir / "ledger.md").read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+
+
 def _stop_nudge_file(cwd: str) -> Path:
     return Path(cwd) / ".codex" / "ultracode" / "stop_nudges.json"
 
@@ -319,11 +335,19 @@ def handle_stop(event: dict[str, Any]) -> int:
     # Verify the completion claim against DURABLE artifacts, not just wording.
     cwd = _event_cwd(event)
     run_dir = _latest_run_dir(cwd)
+    # A read-only / unsupported-environment run may record a durable skip justification.
+    if _verification_skipped(run_dir):
+        _reset_stop_nudges(cwd)
+        return emit({"continue": True})
     if not _artifacts_present(run_dir):
         problem = ("no non-empty verification.json + adversarial_verification.json were found under "
-                   ".codex/ultracode/runs/, so the completion claim is not backed by durable evidence")
+                   ".codex/ultracode/runs/. If this task changed code, run uc_verify.py --execute and "
+                   "uc_adversarial_verify.py. If it is read-only (no code changed) or those scripts cannot "
+                   "run in this environment, write a non-empty verification_skip.json (with a \"reason\" and "
+                   "what was checked instead) into the run dir to record why — that satisfies this gate")
     elif _gate_status(run_dir) == "fail":
-        problem = "the adversarial gate status is `fail`"
+        problem = ("the adversarial gate status is `fail`; resolve the failing findings, or record why they "
+                   "are accepted/not applicable in verification_skip.json")
     else:
         _reset_stop_nudges(cwd)
         return emit({"continue": True})
@@ -334,9 +358,8 @@ def handle_stop(event: dict[str, Any]) -> int:
         return emit({"continue": True})
     return emit({
         "decision": "block",
-        "reason": (f"Ultracode continuation required: {problem}. Run uc_verify.py --execute and "
-                   "uc_adversarial_verify.py (or explicitly list why they were skipped), resolve any "
-                   "gate=fail, and include verification + adversarial gate status before stopping."),
+        "reason": (f"Ultracode continuation required: {problem}. Then include the verification and "
+                   "adversarial gate status before stopping."),
     })
 
 

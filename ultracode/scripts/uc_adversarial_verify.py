@@ -16,17 +16,44 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+# Single-segment directory names only: this set is matched against individual path
+# parts, so a joined string like ".codex/ultracode" could never match (its parts are
+# ".codex" and "ultracode" separately) — use ".codex". "storage" and "env" added so
+# large data/venv dirs are pruned and the scan does not crawl them on a slow mount.
 EXCLUDE_DIRS = {
-    ".git", ".hg", ".svn", ".codex/ultracode", "node_modules", ".venv", "venv",
+    ".git", ".hg", ".svn", ".codex", "node_modules", ".venv", "venv", "env",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
     "target", ".tox", ".idea", ".vscode", ".next", ".turbo", "coverage", ".cache",
+    "storage",
 }
+WALK_BUDGET_SECONDS = 8.0
+
+
+def walk_files(root: Path, cap: int = 4000, budget: float = WALK_BUDGET_SECONDS) -> tuple[list[Path], bool]:
+    """Pruned, time-budgeted file walk; returns (files, truncated).
+
+    Prunes EXCLUDE_DIRS and hidden dirs IN-PLACE via os.walk (pathlib.rglob can only
+    filter after descending, which wedged this script on a 9p/drvfs WSL mount), and
+    stops on a file-count cap or wall-clock budget so a huge/slow tree cannot stall it.
+    """
+    files: list[Path] = []
+    start = time.monotonic()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            files.append(Path(dirpath) / fn)
+            if len(files) >= cap:
+                return files, True
+        if time.monotonic() - start > budget:
+            return files, True
+    return files, False
 
 SOURCE_SUFFIXES = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".rs", ".java",
@@ -129,7 +156,8 @@ def collect_changed_files(root: Path, git_snapshot: dict[str, Any], explicit_pat
                 if candidate.is_file():
                     paths.append(candidate)
                 elif candidate.is_dir():
-                    paths.extend(x for x in candidate.rglob("*") if x.is_file() and not should_skip(x))
+                    sub, _ = walk_files(candidate, cap=2000)
+                    paths.extend(x for x in sub if not should_skip(x))
     elif git_snapshot.get("available"):
         for name in git_snapshot.get("diff_name_only", []):
             p = (root / name).resolve()
@@ -137,8 +165,9 @@ def collect_changed_files(root: Path, git_snapshot: dict[str, Any], explicit_pat
                 paths.append(p)
     if not paths:
         # Fallback: inspect a bounded set of likely source/config/docs files.
-        for p in root.rglob("*"):
-            if p.is_file() and not should_skip(p) and (p.suffix in SOURCE_SUFFIXES or p.suffix in DOC_SUFFIXES or p.name in CONFIG_NAMES):
+        all_files, _ = walk_files(root, cap=4000)
+        for p in all_files:
+            if not should_skip(p) and (p.suffix in SOURCE_SUFFIXES or p.suffix in DOC_SUFFIXES or p.name in CONFIG_NAMES):
                 paths.append(p)
                 if len(paths) >= 200:
                     break
@@ -185,8 +214,9 @@ def scan_risk_patterns(root: Path, files: Iterable[Path]) -> list[Finding]:
 
 def find_tests(root: Path) -> list[Path]:
     tests: list[Path] = []
-    for p in root.rglob("*"):
-        if not p.is_file() or should_skip(p):
+    all_files, _ = walk_files(root, cap=4000)
+    for p in all_files:
+        if should_skip(p):
             continue
         name = p.name.lower()
         parts = {part.lower() for part in p.parts}
@@ -471,8 +501,10 @@ Use Codex subagents explicitly. Prefer CSV fan-out with `adversarial_work_items.
 Each adversarial worker must stay within its assigned scope and return exactly one JSON object with keys:
 
 ```json
-{{"id":"...","agent":"...","status":"ok|blocked|needs-confirmation|fail","summary":"...","evidence":[],"findings":[],"changes":[],"verification":[],"recommendations":[],"open_questions":[]}}
+{{"id":"...","agent":"...","scope":"<your assigned lane>","status":"ok|blocked|error","verdict":"pass|concerns|fail","summary":"...","evidence":[],"findings":[],"changes":[],"verification":[],"recommendations":[],"open_questions":[]}}
 ```
+
+Keep the two axes separate: `status` is execution only (ok | blocked | error — did you finish your review?); `verdict` is your judgment (pass | concerns | fail). A completed review with a negative judgment is status=ok, verdict=fail — never put the judgment into status.
 
 Adversarial rule: do not rubber-stamp. Try to prove the result wrong. For every issue, include the exact file/path/command/line or state why evidence is unavailable. Focus on small-detail failures: wrong file names, wrong install command, wrong CLI flags, unsupported final claims, stale docs, missed edge cases, and skipped tests.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -88,10 +89,42 @@ def flatten_findings(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return findings
 
 
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def severity_rank(sev: Any) -> int:
+    return SEVERITY_ORDER.get(str(sev).strip().lower(), 9)
+
+
+def dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the same finding reported by multiple workers into one entry that lists
+    all corroborating sources. Keeps the most severe label. Empty-claim items are never
+    merged. Produces one complete inventory instead of N partly-overlapping ones."""
+    groups: dict[Any, dict[str, Any]] = {}
+    order: list[Any] = []
+    for f in findings:
+        claim = re.sub(r"\s+", " ", str(f.get("claim", "")).strip().lower())
+        ev = f.get("evidence")
+        ev0 = re.sub(r"\s+", " ", str(ev[0]).strip().lower()) if isinstance(ev, list) and ev else ""
+        key = (claim, ev0) if claim else ("", "", len(order))
+        if key not in groups:
+            g = dict(f)
+            g["sources"] = []
+            groups[key] = g
+            order.append(key)
+        g = groups[key]
+        src = f.get("work_item_id") or f.get("source_result")
+        if src and src not in g["sources"]:
+            g["sources"].append(src)
+        if severity_rank(f.get("severity")) < severity_rank(g.get("severity")):
+            g["severity"] = f.get("severity")
+    return [groups[k] for k in order]
+
+
 def write_claims_csv(run_dir: Path, findings: list[dict[str, Any]]) -> None:
     path = run_dir / "claims.csv"
     with path.open("w", newline="", encoding="utf-8") as f:
-        fieldnames = ["work_item_id", "severity", "claim", "evidence", "source_result"]
+        fieldnames = ["work_item_id", "severity", "claim", "evidence", "source_result", "sources"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for finding in findings:
@@ -101,12 +134,15 @@ def write_claims_csv(run_dir: Path, findings: list[dict[str, Any]]) -> None:
                 "claim": finding.get("claim", ""),
                 "evidence": json.dumps(finding.get("evidence", []), ensure_ascii=False),
                 "source_result": finding.get("source_result", ""),
+                "sources": json.dumps(finding.get("sources", []), ensure_ascii=False),
             })
 
 
-def synthesize(run_dir: Path, results: list[dict[str, Any]], work_items: dict[str, dict[str, str]]) -> str:
-    findings = flatten_findings(results)
+def synthesize(run_dir: Path, results: list[dict[str, Any]], work_items: dict[str, dict[str, str]], findings: list[dict[str, Any]] | None = None) -> str:
+    if findings is None:
+        findings = dedupe_findings(flatten_findings(results))
     status_counts = Counter(str(r.get("status", "unknown")) for r in results)
+    verdict_counts = Counter(str(r.get("verdict", "n/a")) for r in results)
     severity_counts = Counter(str(f.get("severity", "info")) for f in findings)
     by_item: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
@@ -117,8 +153,9 @@ def synthesize(run_dir: Path, results: list[dict[str, Any]], work_items: dict[st
         f"Generated: {datetime.now(timezone.utc).isoformat()}\n\n",
         "## Result coverage\n\n",
         f"- Worker result files merged: {len(results)}\n",
-        f"- Status counts: {dict(status_counts)}\n",
-        f"- Finding severity counts: {dict(severity_counts)}\n",
+        f"- Status counts (execution): {dict(status_counts)}\n",
+        f"- Verdict counts (judgment): {dict(verdict_counts)}\n",
+        f"- Consolidated finding severity counts: {dict(severity_counts)}\n",
         f"- Work items expected: {len(work_items)}\n\n",
     ]
     missing = [wid for wid in work_items if wid not in by_item]
@@ -133,7 +170,7 @@ def synthesize(run_dir: Path, results: list[dict[str, Any]], work_items: dict[st
     for result in results:
         wid = result.get("id", "unknown")
         lines.append(f"### {wid}\n\n")
-        lines.append(f"- Status: `{result.get('status', 'unknown')}`\n")
+        lines.append(f"- Status: `{result.get('status', 'unknown')}` | Verdict: `{result.get('verdict', 'n/a')}`\n")
         if result.get("agent"):
             lines.append(f"- Agent: `{result.get('agent')}`\n")
         lines.append(f"- Source: `{result.get('source_file', '')}`\n")
@@ -149,12 +186,14 @@ def synthesize(run_dir: Path, results: list[dict[str, Any]], work_items: dict[st
 
     if findings:
         lines.append("## Consolidated findings\n\n")
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-        for f in sorted(findings, key=lambda x: (severity_order.get(str(x.get("severity", "info")), 9), str(x.get("claim", "")))):
+        lines.append("Deduplicated across workers; findings reported by more than one worker are merged and tagged with all corroborating sources.\n\n")
+        for f in sorted(findings, key=lambda x: (severity_rank(x.get("severity", "info")), str(x.get("claim", "")))):
             claim = str(f.get("claim", "")).strip()
             if not claim:
                 continue
-            lines.append(f"- **{f.get('severity', 'info')}** `{f.get('work_item_id','unknown')}`: {claim}\n")
+            srcs = f.get("sources") or [f.get("work_item_id", "unknown")]
+            tag = f"corroborated by {len(srcs)}: {', '.join(map(str, srcs[:5]))}" if len(srcs) > 1 else f"`{srcs[0]}`"
+            lines.append(f"- **{f.get('severity', 'info')}** ({tag}): {claim}\n")
             evidence = f.get("evidence") or []
             if evidence:
                 if isinstance(evidence, list):
@@ -193,9 +232,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     work_items = read_work_items(run_dir)
     results = collect_results(run_dir)
-    findings = flatten_findings(results)
+    findings = dedupe_findings(flatten_findings(results))
     write_claims_csv(run_dir, findings)
-    synthesis = synthesize(run_dir, results, work_items)
+    synthesis = synthesize(run_dir, results, work_items, findings)
     synthesis_path = run_dir / "synthesis.md"
     synthesis_path.write_text(synthesis, encoding="utf-8")
     update_ledger(run_dir, synthesis_path)

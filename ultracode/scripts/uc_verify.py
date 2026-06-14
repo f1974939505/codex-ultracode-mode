@@ -8,9 +8,44 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Directories that must never be walked: VCS metadata, dependency/build caches, the
+# Ultracode run tree, and large data dirs. Pruning these is what keeps the scan from
+# wedging on a huge or slow (e.g. WSL 9p/drvfs) filesystem.
+EXCLUDE_DIR_NAMES = {
+    ".git", ".hg", ".svn", ".venv", "venv", "env", "__pycache__", ".codex",
+    "node_modules", "dist", "build", "target", ".next", ".turbo", "coverage",
+    "storage", ".cache", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".idea", ".vscode",
+}
+WALK_BUDGET_SECONDS = 8.0
+PY_FILE_CAP = 200
+
+
+def collect_py_files(root: Path, cap: int = PY_FILE_CAP, budget: float = WALK_BUDGET_SECONDS) -> tuple[list[Path], bool]:
+    """Pruned, time-budgeted walk for *.py files; returns (files, truncated).
+
+    Uses os.walk with in-place dirname pruning so excluded/hidden directories are
+    never descended into (pathlib.rglob filters only AFTER descending, which is what
+    hung this script on a 9p/drvfs mount). Bails out on a file-count cap or a
+    wall-clock budget so a giant or slow tree can never wedge detection.
+    """
+    files: list[Path] = []
+    start = time.monotonic()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIR_NAMES and not d.startswith(".")]
+        for fn in filenames:
+            if fn.endswith(".py"):
+                files.append(Path(dirpath) / fn)
+                if len(files) >= cap:
+                    return files, True
+        if time.monotonic() - start > budget:
+            return files, True
+    return files, False
 
 
 def safe_read(path: Path, max_bytes: int = 65536) -> str:
@@ -20,8 +55,9 @@ def safe_read(path: Path, max_bytes: int = 65536) -> str:
         return ""
 
 
-def detect_commands(root: Path) -> list[dict[str, str]]:
+def detect_commands(root: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
     commands: list[dict[str, str]] = []
+    scan: dict[str, Any] = {}
     if (root / "package.json").exists():
         try:
             pkg = json.loads(safe_read(root / "package.json"))
@@ -33,12 +69,16 @@ def detect_commands(root: Path) -> list[dict[str, str]]:
             commands.append({"kind": "test", "command": "npm test", "reason": "package.json present"})
     if (root / "pyproject.toml").exists() or (root / "pytest.ini").exists() or (root / "tox.ini").exists():
         commands.append({"kind": "test", "command": "python -m pytest -q", "reason": "Python project/test config present"})
-    py_files = [p for p in root.rglob("*.py") if ".venv" not in p.parts and "__pycache__" not in p.parts and ".codex" not in p.parts]
-    if py_files and len(py_files) <= 200:
+    py_files, py_truncated = collect_py_files(root)
+    scan["py_files_scanned"] = len(py_files)
+    scan["py_scan_truncated"] = py_truncated
+    if py_files and not py_truncated:
         # Quote each path: filenames with spaces or shell metacharacters would
         # otherwise word-split under shell=True and falsely fail the syntax check.
-        quoted = " ".join(shlex.quote(str(p.relative_to(root))) for p in py_files[:200])
-        commands.append({"kind": "syntax", "command": "python -m py_compile " + quoted, "reason": "Python syntax check for <=200 files"})
+        quoted = " ".join(shlex.quote(str(p.relative_to(root))) for p in py_files)
+        commands.append({"kind": "syntax", "command": "python -m py_compile " + quoted, "reason": f"Python syntax check ({len(py_files)} files)"})
+    elif py_truncated:
+        scan["py_scan_note"] = "skipped blanket python syntax check: workspace too large or scan budget exceeded (e.g. slow/large filesystem); rely on the project's own test/lint commands"
     if (root / "Cargo.toml").exists():
         commands.append({"kind": "test", "command": "cargo test", "reason": "Cargo.toml present"})
     if (root / "go.mod").exists():
@@ -59,7 +99,7 @@ def detect_commands(root: Path) -> list[dict[str, str]]:
         if cmd["command"] not in seen:
             seen.add(cmd["command"])
             out.append(cmd)
-    return out
+    return out, scan
 
 
 def run_shell(command: str, cwd: Path, timeout: int) -> dict[str, Any]:
@@ -116,11 +156,12 @@ def main(argv: list[str] | None = None) -> int:
     if not root.exists():
         print(f"workspace does not exist: {root}", file=sys.stderr)
         return 2
-    commands = detect_commands(root)
+    commands, scan = detect_commands(root)
     report: dict[str, Any] = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "workspace": str(root),
         "executed": bool(args.execute),
+        "scan": scan,
         "commands": commands,
         "results": [],
     }

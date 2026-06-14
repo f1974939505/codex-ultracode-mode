@@ -105,25 +105,27 @@ Read the generated:
 
 ### Phase 2 — Read-only reconnaissance when routed
 
-Use read-only subagents before changing files whenever the route calls for mapping or broad changes. Spawn focused Codex subagents such as:
+Use read-only subagents before changing files whenever the route calls for mapping or broad changes. Give each subagent a NON-OVERLAPPING lane so a fan-out of N workers is complementary rather than N near-duplicate audits; each must stay in its lane and cite (not re-derive) another role's territory:
 
-- `ultracode_mapper`: architecture, entry points, data flow, major modules.
-- `ultracode_test_mapper`: test/build/lint commands, CI expectations, fragile integration points.
-- `ultracode_doc_mapper`: AGENTS.md, README, constraints, design docs, generated-file conventions.
-- `ultracode_reviewer`: security, destructive operations, compatibility risks, data-loss risks.
+- `ultracode_mapper`: implemented capability via SOURCE CODE only — entry points, data flow, modules, real-vs-vaporware.
+- `ultracode_test_mapper`: verification maturity only — test/build/lint/CI commands, eval/QA harnesses, fragile checks. Must not make auth/security claims from app source.
+- `ultracode_doc_mapper`: docs/config truth-sources only — AGENTS.md, README, docs/*, config files, generated-file conventions, doc-vs-config drift.
+- `ultracode_reviewer`: security, destructive operations, compatibility, data-egress/privacy, IP. This is the role that SCORES the result.
 
-Each subagent must return one structured result:
+Each subagent must return one structured result. Keep two axes separate: `status` is execution only (did you finish your assigned read?); `verdict` is your assessment (pure mappers use `not-applicable`; only judging roles return `pass`/`concerns`/`fail`). Never put a judgment into `status`.
 
 ```json
 {
   "id": "<work-item-id>",
-  "status": "ok|blocked|needs-confirmation",
+  "scope": "<your assigned lane>",
+  "status": "ok|blocked|error",
+  "verdict": "pass|concerns|fail|not-applicable",
   "summary": "one paragraph",
   "evidence": [
     {"path": "file", "lines": "Lx-Ly or symbol", "claim": "what this proves"}
   ],
   "findings": [
-    {"severity": "high|medium|low|info", "claim": "...", "evidence": ["..."]}
+    {"severity": "critical|high|medium|low|info", "claim": "...", "evidence": ["..."]}
   ],
   "recommendations": ["..."],
   "open_questions": ["..."]
@@ -241,6 +243,18 @@ Spawn adversarial workers from `adversarial_work_items.csv` for nontrivial chang
 - `ultracode_verifier`: audits whether the verification is sufficient.
 
 Do not suppress critical or high adversarial findings. Either fix them, rerun verification, or list them as unresolved with exact evidence. In strict mode, do not present a clean completion if the adversarial gate is `fail`.
+
+#### When executable verification is not applicable (read-only audit or unsupported environment)
+
+For a read-only task (`needs_implementation=false`, e.g. a pure audit or review where no code changed), or when the verification scripts cannot run in this environment (for example they hang on a slow/large filesystem such as a WSL `9p`/`drvfs` mount, or the sandbox denies writing the run dir), do NOT loop on the scripts. Instead record a durable, explicit justification by writing a non-empty `verification_skip.json` into the run directory:
+
+```bash
+cat > .codex/ultracode/runs/<run-id>/verification_skip.json <<'JSON'
+{ "skipped": true, "reason": "read-only audit; no code changed", "checked_instead": ["doc/code/test cross-read by 4 read-only subagents", "git status clean"] }
+JSON
+```
+
+The Stop completion gate accepts a non-empty `verification_skip.json` (or an `ULTRACODE-VERIFICATION-SKIP` marker in `ledger.md`) as satisfying the durable-evidence requirement, so the run can finish cleanly without re-running checks that are not meaningful for the task. Be honest: only skip when execution is genuinely not applicable, and state what you verified instead.
 
 ### Phase 8 — Final ledger
 
