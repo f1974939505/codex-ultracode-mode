@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "timeout": 30,
+            "statusMessage": "Checking Ultracode prompt mode"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "timeout": 30,
+            "statusMessage": "Injecting Ultracode subagent schema"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "timeout": 30,
+            "statusMessage": "Ultracode safety check"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "timeout": 30,
+            "statusMessage": "Checking Ultracode final ledger"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "architecture-map",
+  "agent": "mapper",
+  "status": "ok",
+  "summary": "Sample repo has one Python source file and basic instructions.",
+  "evidence": [
+    {"path": "src/sample_math.py", "lines": "module", "claim": "contains add and risky_divide"}
+  ],
+  "findings": [
+    {"severity": "info", "claim": "No test file is present in sample repo.", "evidence": ["tests/sample_repo has no test_*.py"]}
+  ],
+  "changes": [],
+  "verification": [
+    {"command": "python -m py_compile src/sample_math.py", "status": "pass", "output_summary": "syntax ok"}
+  ],
+  "recommendations": ["Add unit tests if behavior is changed."],
+  "open_questions": []
+}

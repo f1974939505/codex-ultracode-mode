@@ -1,0 +1,34 @@
+# Standalone Codex profile (Codex >= 0.134 format).
+#
+# This is a COMPLETE config file that Codex layers on top of your base config
+# when you select it by name. The installer copies it to:
+#   $CODEX_HOME/ultracode-xhigh.config.toml   (default $CODEX_HOME is ~/.codex)
+# Select it with:
+#   codex --profile ultracode-xhigh
+#   codex exec -p ultracode-xhigh ...
+#
+# DO NOT paste this into config.toml under a [profiles.<name>] table. The legacy
+# inline-profile syntax ([profiles.NAME] with nested tables) was removed in
+# Codex 0.134.0; a config.toml containing it fails to load and blocks CLI
+# startup. Profiles are now standalone "<name>.config.toml" files in $CODEX_HOME.
+#
+# Note: profiles are resolved from $CODEX_HOME, not from a project's .codex/.
+# For a project-scoped install, either copy this file into your real $CODEX_HOME,
+# or run Codex with CODEX_HOME pointed at the project's .codex directory.
+
+# Closest Codex-side analogue to the xhigh half of Claude Code's Ultracode.
+model_reasoning_effort = "xhigh"
+plan_mode_reasoning_effort = "xhigh"
+model_verbosity = "high"
+
+# Enable the hooks subsystem used by the $ultracode guardrails.
+[features]
+hooks = true
+
+# Subagent fan-out controls. Codex's default agents.max_threads is 6; raise it to
+# match the skill's recommended <=16 concurrent workers. Keep depth at 1 so
+# subagents do not recursively spawn more subagents.
+[agents]
+max_threads = 16
+max_depth = 1
+job_max_runtime_seconds = 1800

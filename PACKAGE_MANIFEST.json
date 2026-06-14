@@ -1,0 +1,259 @@
+{
+  "name": "ultracode-dynamic-workflow-codex",
+  "version": "3.1.0",
+  "created_at_utc": "2026-06-14T07:58:08.562627+00:00",
+  "skill_name": "ultracode",
+  "activation": "$ultracode only",
+  "notes": "PACKAGE_MANIFEST.json excludes itself from the file hash list.",
+  "primary_changes": [
+    "Profile reissued as standalone $CODEX_HOME/<name>.config.toml (top-level keys); legacy [profiles.X] removed (was rejected by Codex >= 0.134). install.py places it at CODEX_HOME root.",
+    "Uninstall now prunes ultracode hook groups from hooks.json (preserving unrelated hooks + backup), supports --scope project, and ships a Windows uninstaller.",
+    "uc_verify.py shlex-quotes py_compile paths; uc_merge_results.py tolerates missing id column and string findings; uc_adversarial_verify.py guards the delegated subprocess timeout.",
+    "Adversarial gate now ingests worker result CONTENT (failing status / high findings block; filename-only results fail strict) and flags shallow syntax-only verification.",
+    "Stop hook verifies durable artifacts + adversarial gate status (not wording), with an escape valve so it cannot loop when stop_hook_active is absent.",
+    "Hook router emits Codex-native top-level permissionDecision/additionalContext (Claude hookSpecificOutput kept for compatibility); destructive-command detection is quote-aware and broader; PreToolUse no longer gates on a Claude-specific tool name.",
+    "Packaging: install ignores __pycache__; uc_check_package.py adds an agents/ vs ultracode/agents/ drift check; spawn prompt inlines per-role developer_instructions as a named-agent fallback and notes max_threads concurrency."
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 11060,
+      "sha256": "4640d286dd13cec61ef1feb6b3915c9fc4ccd7e6ce5d2f94823685bf0ca379c6"
+    },
+    {
+      "path": "agents/ultracode_adversary.toml",
+      "bytes": 893,
+      "sha256": "6d37f69d91bc269a82cee8d58dd31d6470dc1585c584b18cc1cf8e7e90bd55b1"
+    },
+    {
+      "path": "agents/ultracode_claim_checker.toml",
+      "bytes": 841,
+      "sha256": "4a5abbf3cc4611e74490231f10b38e14063d382f113a0d6da683ff62493d12cc"
+    },
+    {
+      "path": "agents/ultracode_doc_mapper.toml",
+      "bytes": 794,
+      "sha256": "607956d16dcdf86afb03a025f2e62e6f066f593da558c4d00f816117a1ac637a"
+    },
+    {
+      "path": "agents/ultracode_edge_tester.toml",
+      "bytes": 850,
+      "sha256": "1f879ca37197e2c0351747c0f9bd5484d6e541dd5af7fcbed6ed20f1acb00e2d"
+    },
+    {
+      "path": "agents/ultracode_mapper.toml",
+      "bytes": 784,
+      "sha256": "04b179f0fd81ecac15722a74b75c899990e672e2d29a78f8614342ec77131272"
+    },
+    {
+      "path": "agents/ultracode_planner.toml",
+      "bytes": 716,
+      "sha256": "c5f808e13634c9b906c2fee710f18f999fec708b934885a2c3bbc03731c9651c"
+    },
+    {
+      "path": "agents/ultracode_reviewer.toml",
+      "bytes": 848,
+      "sha256": "6bf2291b6b9f78096bb4b84d88769a1fe021431bf1058040bb58e28095855b29"
+    },
+    {
+      "path": "agents/ultracode_test_mapper.toml",
+      "bytes": 709,
+      "sha256": "191e4f668efce6391fdf1c582c2843e57ea091d7b98ffb4413a80f1f282239a0"
+    },
+    {
+      "path": "agents/ultracode_verifier.toml",
+      "bytes": 817,
+      "sha256": "984d938767bf6f7e8f1cdce99e693151f435f5c09d4d451ccd0c574e4f18fcc3"
+    },
+    {
+      "path": "agents/ultracode_worker.toml",
+      "bytes": 742,
+      "sha256": "41e93945008d4ae525ac4daa62369255bf47e8074f05d2989c1de6b6a15569ce"
+    },
+    {
+      "path": "hooks/hooks.json",
+      "bytes": 1265,
+      "sha256": "06380bfa16e66b1f4ee487d63acf9b9d2362d970a6d0d7c233e9285c3871822e"
+    },
+    {
+      "path": "install_ultracode.ps1",
+      "bytes": 708,
+      "sha256": "e7033bcd0b8e305f8070a6b0bcf40383b94253a1b4fcdbb431411e32ee9b8ffc"
+    },
+    {
+      "path": "install_ultracode.sh",
+      "bytes": 998,
+      "sha256": "e8181c5ce36b5745bc40e6586f2301100c3f58dcf629c393d770ec8c9cb1b129"
+    },
+    {
+      "path": "profiles/ultracode-xhigh.config.toml",
+      "bytes": 1457,
+      "sha256": "6f4feecc4b4bd8b4f76233fc196bcac57370e146f59cf956cba4787707229da5"
+    },
+    {
+      "path": "tests/fixtures/fake_adversarial_result.json",
+      "bytes": 555,
+      "sha256": "ba445b25d3c1128e587b9ac61490710575177f3bc7a98dd74d154be7d250956b"
+    },
+    {
+      "path": "tests/fixtures/fake_worker_result.json",
+      "bytes": 655,
+      "sha256": "fb9506dc4146f48bf39e90420e106a8b273e22da25b9a86d379f0784aa0ec232"
+    },
+    {
+      "path": "tests/run_smoke_tests.py",
+      "bytes": 4524,
+      "sha256": "671cbe798280c4d4fb02c3c39ea9f89396b38ef109cad6221c82d08767f44ace"
+    },
+    {
+      "path": "tests/sample_repo/AGENTS.md",
+      "bytes": 98,
+      "sha256": "3fda384b03b820718609e4b4de1c9b78b6aceeb8c55491314faed138f3558f12"
+    },
+    {
+      "path": "tests/sample_repo/README.md",
+      "bytes": 166,
+      "sha256": "06a4ad7b68820b43c7aabcf8fe2f7c82b0ecb18a0ba7c0c9ada891899140d656"
+    },
+    {
+      "path": "tests/sample_repo/src/sample_math.py",
+      "bytes": 174,
+      "sha256": "9ce58727b39dff65ea6ce9e9d90190dd19c907d1e21ecdbcdf0d878f93983961"
+    },
+    {
+      "path": "tests/sample_repo/tests/test_sample_math.py",
+      "bytes": 152,
+      "sha256": "bfc169d0ce5e9f91361aee1e724f52dbd2f893829c20b992a9dc0ddee4b632dd"
+    },
+    {
+      "path": "ultracode/SKILL.md",
+      "bytes": 12033,
+      "sha256": "dc1d23b708e05c977f1484f46c90238e8cd9c8c1143b320ca26bb39a483169da"
+    },
+    {
+      "path": "ultracode/agents/ultracode_adversary.toml",
+      "bytes": 893,
+      "sha256": "6d37f69d91bc269a82cee8d58dd31d6470dc1585c584b18cc1cf8e7e90bd55b1"
+    },
+    {
+      "path": "ultracode/agents/ultracode_claim_checker.toml",
+      "bytes": 841,
+      "sha256": "4a5abbf3cc4611e74490231f10b38e14063d382f113a0d6da683ff62493d12cc"
+    },
+    {
+      "path": "ultracode/agents/ultracode_doc_mapper.toml",
+      "bytes": 794,
+      "sha256": "607956d16dcdf86afb03a025f2e62e6f066f593da558c4d00f816117a1ac637a"
+    },
+    {
+      "path": "ultracode/agents/ultracode_edge_tester.toml",
+      "bytes": 850,
+      "sha256": "1f879ca37197e2c0351747c0f9bd5484d6e541dd5af7fcbed6ed20f1acb00e2d"
+    },
+    {
+      "path": "ultracode/agents/ultracode_mapper.toml",
+      "bytes": 784,
+      "sha256": "04b179f0fd81ecac15722a74b75c899990e672e2d29a78f8614342ec77131272"
+    },
+    {
+      "path": "ultracode/agents/ultracode_planner.toml",
+      "bytes": 716,
+      "sha256": "c5f808e13634c9b906c2fee710f18f999fec708b934885a2c3bbc03731c9651c"
+    },
+    {
+      "path": "ultracode/agents/ultracode_reviewer.toml",
+      "bytes": 848,
+      "sha256": "6bf2291b6b9f78096bb4b84d88769a1fe021431bf1058040bb58e28095855b29"
+    },
+    {
+      "path": "ultracode/agents/ultracode_test_mapper.toml",
+      "bytes": 709,
+      "sha256": "191e4f668efce6391fdf1c582c2843e57ea091d7b98ffb4413a80f1f282239a0"
+    },
+    {
+      "path": "ultracode/agents/ultracode_verifier.toml",
+      "bytes": 817,
+      "sha256": "984d938767bf6f7e8f1cdce99e693151f435f5c09d4d451ccd0c574e4f18fcc3"
+    },
+    {
+      "path": "ultracode/agents/ultracode_worker.toml",
+      "bytes": 742,
+      "sha256": "41e93945008d4ae525ac4daa62369255bf47e8074f05d2989c1de6b6a15569ce"
+    },
+    {
+      "path": "ultracode/references/adversarial-verification.md",
+      "bytes": 2664,
+      "sha256": "6b652c6eac55a09c9dc495fc7d797b322bcad28c71fbc996745ec049627996a6"
+    },
+    {
+      "path": "ultracode/references/prompt-snippets.md",
+      "bytes": 1462,
+      "sha256": "39466eb5d3a2f9a24c92da58f7555e97e53766023644fecc0b6529ddfb479528"
+    },
+    {
+      "path": "ultracode/references/research-notes.md",
+      "bytes": 3623,
+      "sha256": "8cffa6d84041ce6ab3382a033a1909a54ad38765930231eac55307e8d8fe13d5"
+    },
+    {
+      "path": "ultracode/references/worker-output-schema.md",
+      "bytes": 1189,
+      "sha256": "b6d74d45e930c46fdb31e9e3d9e2e423752ac22793e6c76154658d52c556ca90"
+    },
+    {
+      "path": "ultracode/scripts/install.py",
+      "bytes": 12624,
+      "sha256": "34501934aa69aca49edb7eabe37204c86c9c8bdafe5ea7f784a454e2eee47e88"
+    },
+    {
+      "path": "ultracode/scripts/uc_adversarial_verify.py",
+      "bytes": 31545,
+      "sha256": "876484bcd5e1a138fb220bc56daf7e414fb1c7e8508cb35a8776a9a21f5044aa"
+    },
+    {
+      "path": "ultracode/scripts/uc_bootstrap.py",
+      "bytes": 21472,
+      "sha256": "9a89b6f2cce7a5623535be37bee1ba04ba104f72ead16bdc26fe31bdfff8934f"
+    },
+    {
+      "path": "ultracode/scripts/uc_check_package.py",
+      "bytes": 10030,
+      "sha256": "6e52accecabd4ae092317e1b8d991edec980af59662edc08814054aa4b0a1c95"
+    },
+    {
+      "path": "ultracode/scripts/uc_hook_router.py",
+      "bytes": 13794,
+      "sha256": "e833fe6eecdde9bac4ef3d9c1618e08994a2ace80be365d4a3b0ee942906e7a9"
+    },
+    {
+      "path": "ultracode/scripts/uc_merge_results.py",
+      "bytes": 8529,
+      "sha256": "39073d568d60acbc2c86266f35a82b091051d069b67cd185f245e45818128bea"
+    },
+    {
+      "path": "ultracode/scripts/uc_route.py",
+      "bytes": 16028,
+      "sha256": "822f02cc4864b51b8f47d0dff106637b27a931be22aa757fd979ce6f0374f3e2"
+    },
+    {
+      "path": "ultracode/scripts/uc_state.py",
+      "bytes": 2091,
+      "sha256": "88c07745d08e24d447929639580ef20aff72be9a142f36b07ecdf3e451fa7e8f"
+    },
+    {
+      "path": "ultracode/scripts/uc_verify.py",
+      "bytes": 7365,
+      "sha256": "e6bb6d0ebd1c5886cfcc5358dc3ae3272311a788efa7a2ca8418a7f1b04b5e3f"
+    },
+    {
+      "path": "uninstall_ultracode.ps1",
+      "bytes": 531,
+      "sha256": "9b5c5cc125724cb616adfc6554c1b72f25ee3a9b5c2840b637398f97b522eab6"
+    },
+    {
+      "path": "uninstall_ultracode.sh",
+      "bytes": 641,
+      "sha256": "26cf9b896aab87d9f7f9a2b1c33269dce4ef7f208311a212c5d0ee801985c940"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "adversarial-claim-check",
+  "agent": "ultracode_claim_checker",
+  "status": "ok",
+  "summary": "Claims are limited to generated artifacts and syntax verification in the sample run.",
+  "evidence": [
+    {"path": "verification.json", "lines": "artifact", "claim": "verification artifact exists"}
+  ],
+  "findings": [],
+  "changes": [],
+  "verification": [
+    {"command": "python -m py_compile src/sample_math.py tests/test_sample_math.py", "status": "pass", "output_summary": "syntax ok"}
+  ],
+  "recommendations": [],
+  "open_questions": []
+}
