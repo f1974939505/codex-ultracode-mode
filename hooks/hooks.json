@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "command": "python3 \"$HOME/.codex/skills/ultracode/scripts/uc_hook_router.py\"",
             "timeout": 30,
             "statusMessage": "Checking Ultracode prompt mode"
           }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "command": "python3 \"$HOME/.codex/skills/ultracode/scripts/uc_hook_router.py\"",
             "timeout": 30,
             "statusMessage": "Injecting Ultracode subagent schema"
           }
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "command": "python3 \"$HOME/.codex/skills/ultracode/scripts/uc_hook_router.py\"",
             "timeout": 30,
             "statusMessage": "Ultracode safety check"
           }
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.agents/skills/ultracode/scripts/uc_hook_router.py\"",
+            "command": "python3 \"$HOME/.codex/skills/ultracode/scripts/uc_hook_router.py\"",
             "timeout": 30,
             "statusMessage": "Checking Ultracode final ledger"
           }

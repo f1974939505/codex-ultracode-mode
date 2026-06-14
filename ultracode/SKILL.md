@@ -37,15 +37,13 @@ Immediately strip the `$ultracode` token from the user prompt and treat the rema
 
 Run the route helper from whichever installed skill location exists:
 
-- `~/.agents/skills/ultracode`
-- `~/.codex/skills/ultracode`
-- `.agents/skills/ultracode`
-- `.codex/skills/ultracode` as a compatibility fallback
+- `~/.codex/skills/ultracode` (user scope; `$CODEX_HOME/skills/ultracode`)
+- `.codex/skills/ultracode` (project scope)
 
 Preferred command:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_route.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_route.py \
   --workspace . \
   --task "<task text after removing $ultracode>"
 ```
@@ -88,7 +86,7 @@ If the task is clearly trivial even though `$ultracode` was invoked, still keep 
 Create an Ultracode run directory using the bootstrap script. Use the route decision to set `--mode` and `--max-workers`.
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_bootstrap.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_bootstrap.py \
   --workspace . \
   --task "<task text after removing $ultracode>" \
   --mode auto \
@@ -175,7 +173,7 @@ For verification workers:
 Merge worker results. Use the merge script when workers wrote result JSON/Markdown into the run directory:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_merge_results.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_merge_results.py \
   --run-dir .codex/ultracode/runs/<run-id>
 ```
 
@@ -204,7 +202,7 @@ When changing code:
 Detect checks:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_verify.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
   --run-dir .codex/ultracode/runs/<run-id>
 ```
@@ -212,7 +210,7 @@ python3 ~/.agents/skills/ultracode/scripts/uc_verify.py \
 Execute checks only when appropriate for the user permission/sandbox state:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_verify.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
   --run-dir .codex/ultracode/runs/<run-id> \
   --execute
@@ -221,7 +219,7 @@ python3 ~/.agents/skills/ultracode/scripts/uc_verify.py \
 Run the adversarial gate whenever the route selects verification, implementation, migration, refactor, package generation, install scripts, or final-answer claim checking. Use `--strict` for nontrivial modifications, packaging, installers, or migration tasks.
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_adversarial_verify.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --workspace . \
   --run-dir .codex/ultracode/runs/<run-id> \
   --task "<task text after removing $ultracode>" \

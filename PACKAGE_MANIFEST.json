@@ -1,24 +1,23 @@
 {
   "name": "ultracode-dynamic-workflow-codex",
-  "version": "3.1.0",
-  "created_at_utc": "2026-06-14T08:15:26.131766+00:00",
+  "version": "3.2.0",
+  "created_at_utc": "2026-06-14T08:35:03.147420+00:00",
   "skill_name": "ultracode",
   "activation": "$ultracode only",
   "notes": "PACKAGE_MANIFEST.json excludes itself from the file hash list.",
   "primary_changes": [
-    "Profile reissued as standalone $CODEX_HOME/<name>.config.toml (top-level keys); legacy [profiles.X] removed (was rejected by Codex >= 0.134). install.py places it at CODEX_HOME root.",
-    "Uninstall now prunes ultracode hook groups from hooks.json (preserving unrelated hooks + backup), supports --scope project, and ships a Windows uninstaller.",
-    "uc_verify.py shlex-quotes py_compile paths; uc_merge_results.py tolerates missing id column and string findings; uc_adversarial_verify.py guards the delegated subprocess timeout.",
-    "Adversarial gate now ingests worker result CONTENT (failing status / high findings block; filename-only results fail strict) and flags shallow syntax-only verification.",
-    "Stop hook verifies durable artifacts + adversarial gate status (not wording), with an escape valve so it cannot loop when stop_hook_active is absent.",
-    "Hook router emits Codex-native top-level permissionDecision/additionalContext (Claude hookSpecificOutput kept for compatibility); destructive-command detection is quote-aware and broader; PreToolUse no longer gates on a Claude-specific tool name.",
-    "Packaging: install ignores __pycache__; uc_check_package.py adds an agents/ vs ultracode/agents/ drift check; spawn prompt inlines per-role developer_instructions as a named-agent fallback and notes max_threads concurrency."
+    "Codex-only layout: skill installs to .codex/skills/ultracode (verified Codex reads it); nothing is written to .agents/.",
+    "Install overwrites in place with NO .bak backups; hook install replaces ultracode groups idempotently while preserving unrelated hooks.",
+    "Hook router output matches Codex's embedded hook-output JSON schema (hookSpecificOutput wrapper; validated against the 0.136 binary schema).",
+    "Profile is a standalone $CODEX_HOME/<name>.config.toml; legacy [profiles.X] removed.",
+    "Real bug fixes (uc_verify shlex, uc_merge_results, adversarial subprocess timeout); gates ingest worker content; Stop hook checks artifacts+gate with an escape valve; quote-aware destructive-command detection; agents drift check; spawn-prompt role-instruction fallback.",
+    "Cross-platform uninstall (--uninstall, project scope, Windows .ps1) prunes ultracode hook groups."
   ],
   "files": [
     {
       "path": "README.md",
-      "bytes": 11175,
-      "sha256": "d48d691e8916df8da5d01f63b80aa879901ee5fa87d6287158e8341571a478e2"
+      "bytes": 11409,
+      "sha256": "e5f496c59021a1da0b5fa1e9dc939dddcecd17fe01b0933816acd41bcd7eabf5"
     },
     {
       "path": "agents/ultracode_adversary.toml",
@@ -72,18 +71,18 @@
     },
     {
       "path": "hooks/hooks.json",
-      "bytes": 1265,
-      "sha256": "06380bfa16e66b1f4ee487d63acf9b9d2362d970a6d0d7c233e9285c3871822e"
+      "bytes": 1261,
+      "sha256": "0ac54edd03fc7a044d17363fe98c33a6d0ee9d9299e0edb89c1675fa5711b6a5"
     },
     {
       "path": "install_ultracode.ps1",
-      "bytes": 708,
-      "sha256": "e7033bcd0b8e305f8070a6b0bcf40383b94253a1b4fcdbb431411e32ee9b8ffc"
+      "bytes": 658,
+      "sha256": "84efd598bef7c6dc76054a1d35b264298ce0f73b13205661e8fe3a9cca10cf71"
     },
     {
       "path": "install_ultracode.sh",
-      "bytes": 998,
-      "sha256": "e8181c5ce36b5745bc40e6586f2301100c3f58dcf629c393d770ec8c9cb1b129"
+      "bytes": 948,
+      "sha256": "f0d6a6cd7eb7c54ed02dfafb86a97b08265ae6b2f7112401f273eef7eb52c5a5"
     },
     {
       "path": "profiles/ultracode-xhigh.config.toml",
@@ -127,8 +126,8 @@
     },
     {
       "path": "ultracode/SKILL.md",
-      "bytes": 12033,
-      "sha256": "dc1d23b708e05c977f1484f46c90238e8cd9c8c1143b320ca26bb39a483169da"
+      "bytes": 12000,
+      "sha256": "683627c57fb1e51542a28668c92c566c7c6b4ad0c21f457a152f4fbb1f5c94a7"
     },
     {
       "path": "ultracode/agents/ultracode_adversary.toml",
@@ -182,8 +181,8 @@
     },
     {
       "path": "ultracode/references/adversarial-verification.md",
-      "bytes": 2664,
-      "sha256": "6b652c6eac55a09c9dc495fc7d797b322bcad28c71fbc996745ec049627996a6"
+      "bytes": 2663,
+      "sha256": "2a8e397a18001fd201c05910908a55e7b6fc738645b8c9efc7e76df93a979c89"
     },
     {
       "path": "ultracode/references/prompt-snippets.md",
@@ -202,8 +201,8 @@
     },
     {
       "path": "ultracode/scripts/install.py",
-      "bytes": 12624,
-      "sha256": "34501934aa69aca49edb7eabe37204c86c9c8bdafe5ea7f784a454e2eee47e88"
+      "bytes": 12416,
+      "sha256": "f42c544a5d6332765e7386325059c28050e6f9677ae8fb49a3369450fe6b6c2a"
     },
     {
       "path": "ultracode/scripts/uc_adversarial_verify.py",

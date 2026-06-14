@@ -19,9 +19,7 @@ fi
   --with-hooks \
   --with-agents \
   --with-profile \
-  --mirror-codex-skill \
   --archive-old-name \
-  --prune-legacy-hooks \
   "$@"
 
 cat <<'EOF2'

@@ -24,7 +24,7 @@ A strict Ultracode run should contain:
 Run this after ordinary verification:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_adversarial_verify.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --workspace . \
   --run-dir .codex/ultracode/runs/<run-id> \
   --task "<user task>" \

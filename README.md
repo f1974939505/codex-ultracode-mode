@@ -29,14 +29,13 @@ bash install_ultracode.sh
 That command installs, by default:
 
 ```text
-~/.agents/skills/ultracode                 # primary user skill location
-~/.codex/skills/ultracode                  # compatibility mirror
+~/.codex/skills/ultracode                  # skill (Codex reads $CODEX_HOME/skills)
 ~/.codex/agents/ultracode_*.toml           # custom agents
-~/.codex/hooks.json                        # merged hooks
+~/.codex/hooks.json                        # merged hooks (ultracode groups replaced; your other hooks kept)
 ~/.codex/ultracode-xhigh.config.toml       # standalone profile: codex --profile ultracode-xhigh
 ```
 
-It also validates the package before installation, backs up old `ultracode-mode` skill folders, and prunes old `ultracode-mode` hook entries when merging hooks.
+Everything installs under `.codex/` only (this package is Codex-specific; nothing is written to `.agents/`). Install **overwrites in place without creating `.bak` backups**. It validates the package first, removes old `ultracode-mode` skill folders, and replaces any prior ultracode hook groups while leaving your unrelated hooks untouched.
 
 After installing hooks, open Codex and run:
 
@@ -90,7 +89,7 @@ They are not needed. `$ultracode` activates the skill; the route decides the fun
 2. Run `uc_route.py` to create a routing artifact:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_route.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_route.py \
   --workspace . \
   --task "<task text after removing $ultracode>"
 ```
@@ -117,7 +116,7 @@ python3 ~/.agents/skills/ultracode/scripts/uc_route.py \
 4. Bootstrap durable run artifacts:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_bootstrap.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_bootstrap.py \
   --workspace . \
   --task "<task text after removing $ultracode>" \
   --mode auto \
@@ -128,14 +127,14 @@ python3 ~/.agents/skills/ultracode/scripts/uc_bootstrap.py \
 6. Merge evidence:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_merge_results.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_merge_results.py \
   --run-dir .codex/ultracode/runs/<run-id>
 ```
 
 7. Run deterministic verification:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_verify.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
   --run-dir .codex/ultracode/runs/<run-id> \
   --execute
@@ -144,7 +143,7 @@ python3 ~/.agents/skills/ultracode/scripts/uc_verify.py \
 8. Run the adversarial gate when routed:
 
 ```bash
-python3 ~/.agents/skills/ultracode/scripts/uc_adversarial_verify.py \
+python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --workspace . \
   --run-dir .codex/ultracode/runs/<run-id> \
   --task "<task text after removing $ultracode>" \
@@ -187,7 +186,7 @@ Strict rule: do not present a clean completion when the adversarial gate returns
 | `uc_hook_router.py` | Optional hook router for exact `$ultracode` activation context, subagent schema, destructive-command blocking, and final-ledger nudging. |
 | `uc_state.py` | Compatibility state helper; activation remains `$ultracode`. |
 | `uc_check_package.py` | Validates package structure, SKILL.md frontmatter, TOML agents, hook JSON, Python syntax, route script, and hook smoke behavior. |
-| `install.py` | Installs the skill, hooks, custom agents, optional profile, compatibility mirror, and legacy-name cleanup. |
+| `install.py` | Installs the skill, hooks, custom agents, and optional profile under `.codex/` (overwrite, no backups); cleans legacy `ultracode-mode` names. `--uninstall` removes them. |
 
 ## Custom agents included
 

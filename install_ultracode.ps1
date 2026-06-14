@@ -13,9 +13,7 @@ Set-Location $Root
   --with-hooks `
   --with-agents `
   --with-profile `
-  --mirror-codex-skill `
   --archive-old-name `
-  --prune-legacy-hooks `
   @args
 
 Write-Host ""

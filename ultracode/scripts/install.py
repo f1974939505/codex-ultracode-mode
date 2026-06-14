@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Install the `$ultracode` Codex skill package.
 
-Default user install used by install_ultracode.sh:
-  ~/.agents/skills/ultracode              # official Codex user skill location
-  ~/.codex/skills/ultracode               # compatibility mirror for older local setups
+Codex-only layout (everything under .codex/, never .agents/). Overwrites in place;
+no `.bak` backups are created. Default user install used by install_ultracode.sh:
+  ~/.codex/skills/ultracode               # skill (Codex reads $CODEX_HOME/skills)
   ~/.codex/agents/ultracode_*.toml        # custom agent profiles
-  ~/.codex/hooks.json                     # optional merged hooks
+  ~/.codex/hooks.json                     # merged hooks (ultracode groups replaced; others kept)
   ~/.codex/ultracode-xhigh.config.toml    # standalone profile (select via --profile ultracode-xhigh)
 """
 from __future__ import annotations
@@ -27,21 +27,18 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def backup_or_remove(path: Path, dry_run: bool, force: bool) -> None:
-    if not path.exists():
+def backup_or_remove(path: Path, dry_run: bool, force: bool = True) -> None:
+    # Install overwrites in place; no `.bak` backups are created. The `force`
+    # parameter is retained for call-site compatibility and is ignored.
+    if not path.exists() and not path.is_symlink():
         return
-    if force:
-        print(f"remove: {path}")
-        if not dry_run:
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
+    print(f"overwrite: {path}")
+    if dry_run:
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
     else:
-        backup = path.with_name(path.name + f".bak-{timestamp()}")
-        print(f"backup: {path} -> {backup}")
-        if not dry_run:
-            shutil.move(str(path), str(backup))
+        path.unlink()
 
 
 def copytree_replace(src: Path, dst: Path, dry_run: bool, force: bool) -> None:
@@ -116,14 +113,22 @@ def merge_hooks(existing: dict[str, Any], incoming: dict[str, Any], prune_legacy
     return existing
 
 
-def install_hooks(package_root: Path, hooks_dest: Path, skill_dest: Path, dry_run: bool, force: bool, prune_legacy: bool) -> None:
+def install_hooks(package_root: Path, hooks_dest: Path, skill_dest: Path, dry_run: bool, force: bool = True, prune_legacy: bool = True) -> None:
+    # Always remove any prior ultracode hook groups (current + legacy) before adding
+    # the fresh ones, so re-install is idempotent and never duplicates. Unrelated
+    # user hooks are preserved. No backup file is written (overwrite in place).
     incoming = render_hooks(package_root / "hooks" / "hooks.json", skill_dest)
     existing = load_json(hooks_dest)
-    merged = incoming if force or not existing else merge_hooks(existing, incoming, prune_legacy)
-    if hooks_dest.exists() and not dry_run:
-        backup = hooks_dest.with_name(hooks_dest.name + f".bak-{timestamp()}")
-        shutil.copy2(hooks_dest, backup)
-        print(f"backup: {hooks_dest} -> {backup}")
+    hooks = existing.get("hooks")
+    if isinstance(hooks, dict):
+        for event, groups in list(hooks.items()):
+            if isinstance(groups, list):
+                kept = [g for g in groups if not references_ultracode_hook(g)]
+                if kept:
+                    hooks[event] = kept
+                else:
+                    del hooks[event]
+    merged = merge_hooks(existing, incoming, prune_legacy=False)
     print(f"write hooks: {hooks_dest}")
     if not dry_run:
         hooks_dest.parent.mkdir(parents=True, exist_ok=True)
@@ -167,9 +172,6 @@ def prune_ultracode_hooks(hooks_dest: Path, dry_run: bool) -> int:
             del hooks[event]
     print(f"prune hooks: {removed} ultracode group(s) in {hooks_dest}")
     if removed and not dry_run:
-        backup = hooks_dest.with_name(hooks_dest.name + f".bak-{timestamp()}")
-        shutil.copy2(hooks_dest, backup)
-        print(f"backup: {hooks_dest} -> {backup}")
         hooks_dest.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return removed
 
@@ -222,10 +224,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--with-hooks", action="store_true", help="Install/merge hooks.json.")
     parser.add_argument("--with-agents", action="store_true", help="Install ultracode custom agent TOML files.")
     parser.add_argument("--with-profile", action="store_true", help="Copy optional ultracode-xhigh config profile snippet.")
-    parser.add_argument("--mirror-codex-skill", action="store_true", help="Also mirror the skill to .codex/skills/ultracode for compatibility.")
-    parser.add_argument("--archive-old-name", action="store_true", help="Backup/remove previous ultracode-mode skill directories.")
-    parser.add_argument("--prune-legacy-hooks", action="store_true", help="Remove old ultracode-mode hook command groups while merging hooks.")
-    parser.add_argument("--force", action="store_true", help="Replace existing files instead of backing them up first.")
+    parser.add_argument("--mirror-codex-skill", action="store_true", help="(deprecated, no-op) the skill now installs to .codex/skills directly.")
+    parser.add_argument("--archive-old-name", action="store_true", help="Remove previous ultracode-mode skill directories.")
+    parser.add_argument("--prune-legacy-hooks", action="store_true", help="(deprecated, no-op) ultracode hook groups are always replaced on install.")
+    parser.add_argument("--force", action="store_true", help="(deprecated, no-op) install always overwrites in place without backups.")
     parser.add_argument("--dry-run", action="store_true", help="Print actions without writing files.")
     parser.add_argument("--uninstall", action="store_true", help="Remove installed skill, agents, profile, and ultracode hook groups for the chosen scope.")
     args = parser.parse_args(argv)
@@ -240,30 +242,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Cannot find {NEW_SKILL_NAME}/ under package root: {package_root}", file=sys.stderr)
         return 2
 
+    # Codex-only layout: everything lives under .codex/ (no .agents/).
     if args.scope == "user":
-        agents_skill_base = Path.home() / ".agents" / "skills"
         codex_base = Path.home() / ".codex"
     else:
-        project = Path(args.project_root).resolve()
-        agents_skill_base = project / ".agents" / "skills"
-        codex_base = project / ".codex"
+        codex_base = Path(args.project_root).resolve() / ".codex"
 
-    primary_skill_dest = agents_skill_base / NEW_SKILL_NAME
-    mirror_skill_dest = codex_base / "skills" / NEW_SKILL_NAME
+    skill_dest = codex_base / "skills" / NEW_SKILL_NAME
 
     if args.archive_old_name:
-        archive_old_skill_names([primary_skill_dest, mirror_skill_dest], args.dry_run, args.force)
+        archive_old_skill_names([skill_dest], args.dry_run, args.force)
 
-    copytree_replace(skill_src, primary_skill_dest, args.dry_run, args.force)
-
-    if args.mirror_codex_skill:
-        copytree_replace(skill_src, mirror_skill_dest, args.dry_run, args.force)
+    copytree_replace(skill_src, skill_dest, args.dry_run, args.force)
 
     if args.with_agents:
         copy_files(package_root / "agents", codex_base / "agents", "ultracode_*.toml", args.dry_run, args.force)
 
     if args.with_hooks:
-        install_hooks(package_root, codex_base / "hooks.json", primary_skill_dest, args.dry_run, args.force, args.prune_legacy_hooks)
+        install_hooks(package_root, codex_base / "hooks.json", skill_dest, args.dry_run)
 
     if args.with_profile:
         # Profiles must be standalone "<name>.config.toml" files at the CODEX_HOME
@@ -271,9 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         copy_files(package_root / "profiles", codex_base, "*.config.toml", args.dry_run, args.force)
 
     print("install complete")
-    print(f"skill: {primary_skill_dest}")
-    if args.mirror_codex_skill:
-        print(f"compatibility mirror: {mirror_skill_dest}")
+    print(f"skill: {skill_dest}")
     if args.with_profile:
         profile_dest = codex_base / "ultracode-xhigh.config.toml"
         print(f"profile: {profile_dest}")
