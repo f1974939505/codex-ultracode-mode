@@ -17,7 +17,7 @@ from typing import Any
 # Ultracode run tree, and large data dirs. Pruning these is what keeps the scan from
 # wedging on a huge or slow (e.g. WSL 9p/drvfs) filesystem.
 EXCLUDE_DIR_NAMES = {
-    ".git", ".hg", ".svn", ".venv", "venv", "env", "__pycache__", ".codex",
+    ".git", ".hg", ".svn", ".venv", "venv", "env", "__pycache__", ".codex", ".ultracode",
     "node_modules", "dist", "build", "target", ".next", ".turbo", "coverage",
     "storage", ".cache", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
     ".idea", ".vscode",
@@ -150,13 +150,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", default=".", help="Repo/workspace root.")
     parser.add_argument("--run-dir", default=None, help="Ultracode run directory to write verification artifacts.")
     parser.add_argument("--execute", action="store_true", help="Actually run detected commands. Default only detects them.")
+    parser.add_argument("--read-only", action="store_true", help="Read-only/audit task (no code changed): skip project verification command detection entirely.")
     parser.add_argument("--timeout", type=int, default=120, help="Per-command timeout in seconds.")
     args = parser.parse_args(argv)
     root = Path(args.workspace).resolve()
     if not root.exists():
         print(f"workspace does not exist: {root}", file=sys.stderr)
         return 2
-    commands, scan = detect_commands(root)
+    if args.read_only:
+        commands, scan = [], {"read_only": True, "note": "read-only audit: no code changed, so project test/lint/build/syntax verification is not applicable"}
+    else:
+        commands, scan = detect_commands(root)
     report: dict[str, Any] = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "workspace": str(root),

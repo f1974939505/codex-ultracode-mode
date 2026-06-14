@@ -1,22 +1,28 @@
 {
   "name": "ultracode-dynamic-workflow-codex",
-  "version": "3.4.0",
-  "created_at_utc": "2026-06-14T15:03:33.069825+00:00",
+  "version": "3.5.0",
+  "created_at_utc": "2026-06-14T16:06:38.144083+00:00",
   "skill_name": "ultracode",
   "activation": "$ultracode only",
   "notes": "PACKAGE_MANIFEST.json excludes itself from the file hash list.",
   "primary_changes": [
-    "uc_route.py + uc_bootstrap.py: probe run-dir writability up front and emit a clean one-line JSON 'run-dir-not-writable' error (exit 3) instead of a multi-line pathlib traceback when the sandbox denies writes.",
-    "Non-overlapping subagent lanes: doc_mapper=docs/config truth-sources, mapper=source-code capability, test_mapper=verification maturity, reviewer=security/compliance/IP (the scoring role). Enforced in agent TOML developer_instructions, bootstrap work-item objectives, and SKILL.md, so a fan-out is complementary instead of N duplicate audits.",
-    "Result schema splits two axes: status = execution (ok|blocked|error), verdict = judgment (pass|concerns|fail|not-applicable). Updated across all agent TOMLs, SKILL.md, uc_bootstrap spawn prompt, and uc_adversarial_verify spawn prompt; resolves the 'reviewer=fail vs others=ok' false-divergence.",
-    "uc_merge_results.py: dedups findings across workers into one inventory (collapses identical claims, lists all corroborating sources, keeps top severity) and surfaces verdict counts; claims.csv gains a 'sources' column.",
-    "(prior) os.walk traversal budget/pruning fix for slow mounts; task-aware Stop gate (verification_skip.json); Codex-only .codex install; hookSpecificOutput-wrapper output shape; standalone profile; content-aware gates; cross-platform uninstall."
+    "Run artifacts now default to <project>/.ultracode/runs/<id> (writable) instead of <project>/.codex/ultracode/runs/<id> — Codex's workspace-write sandbox makes .codex read-only (verified: .codex EROFS while project root and other dotdirs are writable).",
+    "Run dir created chmod 0700 and <project>/.ultracode/.gitignore '*' written, so artifacts (which can hold private/business data) are owner-only and never committed; fixes the world-readable-/tmp leak on shared hosts.",
+    "uc_route/uc_bootstrap write <project>/.ultracode/last_run_dir; uc_hook_router._latest_run_dir and uc_adversarial_verify auto-discovery read the pointer first (then .ultracode/runs, then legacy .codex/ultracode/runs), so the Stop gate tracks the run even when --out-dir redirects it.",
+    "stop_nudges.json and project state.json moved off read-only .codex to .ultracode (otherwise the Stop escape-valve counter write fails silently -> infinite block).",
+    "Route heuristic no longer mislabels read-only audits as implementation: added 审查/审计/评审/assess to audit keywords and demoted hypothetical 'already implemented' cues.",
+    "uc_verify --read-only skips irrelevant test/lint/build gates for audit tasks; adversarial gate no longer flags 'detected-not-executed' for read-only runs. Reviewer lane tightened to avoid full src/ re-sweep. Sharpened run-dir-not-writable hint."
   ],
   "files": [
     {
+      "path": ".gitignore",
+      "bytes": 221,
+      "sha256": "3462b25a227ae448f6dbd2d558cb681f0cbe9d122b298cf8a803ac4b0eb07874"
+    },
+    {
       "path": "README.md",
-      "bytes": 11409,
-      "sha256": "e5f496c59021a1da0b5fa1e9dc939dddcecd17fe01b0933816acd41bcd7eabf5"
+      "bytes": 12244,
+      "sha256": "5494f19968b42d108884107251a38212c04ace9f112e403deeaad7b981b1f407"
     },
     {
       "path": "agents/ultracode_adversary.toml",
@@ -35,8 +41,8 @@
     },
     {
       "path": "agents/ultracode_edge_tester.toml",
-      "bytes": 866,
-      "sha256": "27a9034d0751e802fc1ca8d5e0573fa5faeaa8147e53ef99abbf742515eca6bc"
+      "bytes": 860,
+      "sha256": "1c4af55e6f0e218a5646d777ff463bd3480284365ad31936e28e8e72d77b1027"
     },
     {
       "path": "agents/ultracode_mapper.toml",
@@ -50,8 +56,8 @@
     },
     {
       "path": "agents/ultracode_reviewer.toml",
-      "bytes": 1377,
-      "sha256": "303c4d43ab274ee29a72af164c4165a9eec7a40d34dea06813a0f4ff78bca3c8"
+      "bytes": 1709,
+      "sha256": "2db7154008f22d92ba6d6ed894252e3692136493d1ac4356b0cf31525efdf372"
     },
     {
       "path": "agents/ultracode_test_mapper.toml",
@@ -125,8 +131,8 @@
     },
     {
       "path": "ultracode/SKILL.md",
-      "bytes": 13869,
-      "sha256": "51fc6ab7af285b2e7cffda50f4325792dc7758d8a74e2876ed46060cfb3a3651"
+      "bytes": 13833,
+      "sha256": "a0df002e4d4ae0b92bc8e8e215f030114a7f2d50e5fca2fe631ced315eaa366d"
     },
     {
       "path": "ultracode/agents/ultracode_adversary.toml",
@@ -145,8 +151,8 @@
     },
     {
       "path": "ultracode/agents/ultracode_edge_tester.toml",
-      "bytes": 866,
-      "sha256": "27a9034d0751e802fc1ca8d5e0573fa5faeaa8147e53ef99abbf742515eca6bc"
+      "bytes": 860,
+      "sha256": "1c4af55e6f0e218a5646d777ff463bd3480284365ad31936e28e8e72d77b1027"
     },
     {
       "path": "ultracode/agents/ultracode_mapper.toml",
@@ -160,8 +166,8 @@
     },
     {
       "path": "ultracode/agents/ultracode_reviewer.toml",
-      "bytes": 1377,
-      "sha256": "303c4d43ab274ee29a72af164c4165a9eec7a40d34dea06813a0f4ff78bca3c8"
+      "bytes": 1709,
+      "sha256": "2db7154008f22d92ba6d6ed894252e3692136493d1ac4356b0cf31525efdf372"
     },
     {
       "path": "ultracode/agents/ultracode_test_mapper.toml",
@@ -180,8 +186,8 @@
     },
     {
       "path": "ultracode/references/adversarial-verification.md",
-      "bytes": 2663,
-      "sha256": "2a8e397a18001fd201c05910908a55e7b6fc738645b8c9efc7e76df93a979c89"
+      "bytes": 2651,
+      "sha256": "347ffa92f177afa69cb7d509766bb6702be6b6499aacf290cd86f388a2f431e8"
     },
     {
       "path": "ultracode/references/prompt-snippets.md",
@@ -205,13 +211,13 @@
     },
     {
       "path": "ultracode/scripts/uc_adversarial_verify.py",
-      "bytes": 33225,
-      "sha256": "4a333cb18023d94910c4c833b7dc8cdba830d08b6bdc7218008c109e518dc96f"
+      "bytes": 34210,
+      "sha256": "6d4fce13d0f5b753bd4a22ff9078472711d70787fa4d9e0b7ef2948e8ffc22f6"
     },
     {
       "path": "ultracode/scripts/uc_bootstrap.py",
-      "bytes": 23439,
-      "sha256": "6a63452fff520594460f8c1b6a97196320cf7de2e93d4d4f54e97bb111b43c76"
+      "bytes": 25086,
+      "sha256": "edb0719dea57ace7c2722701c827073e77da27df35a6a1030e07e03eaa781158"
     },
     {
       "path": "ultracode/scripts/uc_check_package.py",
@@ -220,8 +226,8 @@
     },
     {
       "path": "ultracode/scripts/uc_hook_router.py",
-      "bytes": 15070,
-      "sha256": "67da441e62a4cfa969577117455385bc287ff2b876b8b5ab0f337c6480136d7f"
+      "bytes": 15903,
+      "sha256": "cf4041f355633b8c3bd709bfdbf65f38bdd2d5cf239d75c299ae4cfce5c0e914"
     },
     {
       "path": "ultracode/scripts/uc_merge_results.py",
@@ -230,18 +236,18 @@
     },
     {
       "path": "ultracode/scripts/uc_route.py",
-      "bytes": 16586,
-      "sha256": "aa9ccabf8d41825c0f2413719035604127054b077aee1645099d2832d5fcbcac"
+      "bytes": 19130,
+      "sha256": "fa0cdfca17ba728c03b240a33947488b47a283e796d205048e6b217fe3405859"
     },
     {
       "path": "ultracode/scripts/uc_state.py",
-      "bytes": 2091,
-      "sha256": "88c07745d08e24d447929639580ef20aff72be9a142f36b07ecdf3e451fa7e8f"
+      "bytes": 2203,
+      "sha256": "4fe3876a67cd3a86215e2b35572aab609c27381728ffc9cef126f6ede8c04a79"
     },
     {
       "path": "ultracode/scripts/uc_verify.py",
-      "bytes": 9270,
-      "sha256": "c4fd53a597c1acf1b8a3fb905f92656aab8aa5f4829d5f84a3730db73a3c9e26"
+      "bytes": 9642,
+      "sha256": "41b3d6345b6c242b86e151cbb4ec36d2ff1e5cbe038ab4d0428eb40663db6397"
     },
     {
       "path": "uninstall_ultracode.ps1",

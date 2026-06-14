@@ -28,7 +28,7 @@ from typing import Any, Iterable
 # ".codex" and "ultracode" separately) — use ".codex". "storage" and "env" added so
 # large data/venv dirs are pruned and the scan does not crawl them on a slow mount.
 EXCLUDE_DIRS = {
-    ".git", ".hg", ".svn", ".codex", "node_modules", ".venv", "venv", "env",
+    ".git", ".hg", ".svn", ".codex", ".ultracode", "node_modules", ".venv", "venv", "env",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
     "target", ".tox", ".idea", ".vscode", ".next", ".turbo", "coverage", ".cache",
     "storage",
@@ -330,7 +330,7 @@ def scan_run_artifact_gaps(run_artifacts: dict[str, Any], strict: bool) -> list[
             kind="no-run-dir",
             claim="No Ultracode run directory was supplied or found; final claims cannot be tied to a durable ledger.",
             evidence=[],
-            recommendation="Run uc_bootstrap.py and keep verification/adversarial artifacts under .codex/ultracode/runs/<run-id>/.",
+            recommendation="Run uc_bootstrap.py and keep verification/adversarial artifacts under .ultracode/runs/<run-id>/.",
         ))
         return findings
     verification = run_artifacts.get("verification.json")
@@ -353,12 +353,17 @@ def scan_run_artifact_gaps(run_artifacts: dict[str, Any], strict: bool) -> list[
                 evidence=[f"{r.get('command')}: {r.get('status')} exit={r.get('exit_code')}" for r in failed[:20]],
                 recommendation="Do not mark the task complete until failures are fixed or explicitly scoped out.",
             ))
-        if verification.get("executed") is not True:
+        scan = verification.get("scan", {}) if isinstance(verification, dict) else {}
+        read_only = isinstance(scan, dict) and scan.get("read_only") is True
+        detected_cmds = verification.get("commands", []) if isinstance(verification, dict) else []
+        if read_only:
+            pass  # read-only audit: no code changed, so unrun project checks are expected, not a gap.
+        elif verification.get("executed") is not True and detected_cmds:
             findings.append(Finding(
                 severity="medium",
                 kind="verification-detected-not-executed",
                 claim="Verification commands were detected but not executed.",
-                evidence=[c.get("command", "") for c in verification.get("commands", [])[:20]] if isinstance(verification, dict) else [],
+                evidence=[c.get("command", "") for c in detected_cmds[:20]],
                 recommendation="Execute safe checks or list exact blockers.",
             ))
         elif not failed:
@@ -602,7 +607,7 @@ def update_ledger(run_dir: Path, gate: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run deterministic adversarial verification for an Ultracode run.")
     parser.add_argument("--workspace", default=".", help="Repo/workspace root.")
-    parser.add_argument("--run-dir", default=None, help="Ultracode run directory. Defaults to newest .codex/ultracode/runs/* when available.")
+    parser.add_argument("--run-dir", default=None, help="Ultracode run directory. Defaults to newest .ultracode/runs/* when available.")
     parser.add_argument("--task", default="", help="Task text under review, used in adversarial spawn prompt.")
     parser.add_argument("--base", default="HEAD", help="Git diff base for changed-file detection.")
     parser.add_argument("--path", action="append", default=[], help="Explicit file/dir to inspect. Can be repeated.")
@@ -619,9 +624,24 @@ def main(argv: list[str] | None = None) -> int:
 
     run_dir: Path | None = Path(args.run_dir).resolve() if args.run_dir else None
     if run_dir is None:
-        runs = sorted((root / ".codex" / "ultracode" / "runs").glob("*")) if (root / ".codex" / "ultracode" / "runs").exists() else []
-        if runs:
-            run_dir = runs[-1]
+        # Prefer the pointer written by uc_route/uc_bootstrap (robust to --out-dir),
+        # then scan the current (.ultracode/runs) and legacy (.codex/ultracode/runs) roots.
+        pointer = root / ".ultracode" / "last_run_dir"
+        try:
+            if pointer.exists():
+                p = Path(pointer.read_text(encoding="utf-8").strip())
+                if p.is_dir():
+                    run_dir = p
+        except Exception:
+            pass
+        if run_dir is None:
+            for rel_parts in ((".ultracode", "runs"), (".codex", "ultracode", "runs")):
+                base = root.joinpath(*rel_parts)
+                if base.exists():
+                    runs = sorted(p for p in base.glob("*") if p.is_dir())
+                    if runs:
+                        run_dir = runs[-1]
+                        break
 
     if args.execute and run_dir:
         verify_script = Path(__file__).resolve().parent / "uc_verify.py"
@@ -655,7 +675,7 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(scan_claim_file(root, claim_files))
 
     gate = gate_status(findings, args.strict)
-    out_run_dir = run_dir or (root / ".codex" / "ultracode" / "adversarial-no-run")
+    out_run_dir = run_dir or (root / ".ultracode" / "adversarial-no-run")
     out_run_dir.mkdir(parents=True, exist_ok=True)
     write_adversarial_work_items(out_run_dir, args.task, changed_files, root)
 

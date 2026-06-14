@@ -24,7 +24,7 @@ Once `$ultracode` is present, the user should not need to add any extra mode suf
 5. Keep subagent depth at 1 unless the user explicitly asks for recursive delegation. Recursive fan-out is high-cost and hard to control.
 6. Keep concurrent agents at or below 16. For very large task sets, batch with CSV fan-out rather than opening unbounded parallel threads.
 7. Use read-only exploration before editing nontrivial repositories.
-8. Record route, plan, work items, evidence, verification, adversarial findings, and unresolved risks under `.codex/ultracode/runs/<run-id>/`.
+8. Record route, plan, work items, evidence, verification, adversarial findings, and unresolved risks under `.ultracode/runs/<run-id>/`.
 9. Do not delete uncertain or conflicting information. Mark it as `needs-confirmation` in the ledger.
 10. For code changes, preserve public behavior unless the user explicitly asks to change behavior.
 11. Do not present a clean completion unless verification and the chosen adversarial gate are consistent with that claim.
@@ -176,7 +176,7 @@ Merge worker results. Use the merge script when workers wrote result JSON/Markdo
 
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_merge_results.py \
-  --run-dir .codex/ultracode/runs/<run-id>
+  --run-dir .ultracode/runs/<run-id>
 ```
 
 Resolve conflicts by evidence quality:
@@ -206,7 +206,7 @@ Detect checks:
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
-  --run-dir .codex/ultracode/runs/<run-id>
+  --run-dir .ultracode/runs/<run-id>
 ```
 
 Execute checks only when appropriate for the user permission/sandbox state:
@@ -214,7 +214,7 @@ Execute checks only when appropriate for the user permission/sandbox state:
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
-  --run-dir .codex/ultracode/runs/<run-id> \
+  --run-dir .ultracode/runs/<run-id> \
   --execute
 ```
 
@@ -223,7 +223,7 @@ Run the adversarial gate whenever the route selects verification, implementation
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --workspace . \
-  --run-dir .codex/ultracode/runs/<run-id> \
+  --run-dir .ultracode/runs/<run-id> \
   --task "<task text after removing $ultracode>" \
   --strict
 ```
@@ -249,7 +249,7 @@ Do not suppress critical or high adversarial findings. Either fix them, rerun ve
 For a read-only task (`needs_implementation=false`, e.g. a pure audit or review where no code changed), or when the verification scripts cannot run in this environment (for example they hang on a slow/large filesystem such as a WSL `9p`/`drvfs` mount, or the sandbox denies writing the run dir), do NOT loop on the scripts. Instead record a durable, explicit justification by writing a non-empty `verification_skip.json` into the run directory:
 
 ```bash
-cat > .codex/ultracode/runs/<run-id>/verification_skip.json <<'JSON'
+cat > .ultracode/runs/<run-id>/verification_skip.json <<'JSON'
 { "skipped": true, "reason": "read-only audit; no code changed", "checked_instead": ["doc/code/test cross-read by 4 read-only subagents", "git status clean"] }
 JSON
 ```

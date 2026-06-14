@@ -1,0 +1,11 @@
+# Ultracode run artifacts (also self-ignored via <project>/.ultracode/.gitignore)
+.ultracode/
+# Legacy run location
+.codex/ultracode/
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+# Backups / temp
+*.bak-*
+.tmp-uc-route-check/

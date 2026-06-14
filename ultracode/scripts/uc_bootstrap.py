@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 EXCLUDE_DIRS = {
-    ".git", ".hg", ".svn", ".codex/ultracode", "node_modules", ".venv", "venv",
+    ".git", ".hg", ".svn", ".codex/ultracode", ".ultracode", "node_modules", ".venv", "venv",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
     "target", ".tox", ".idea", ".vscode", ".next", ".turbo", "coverage", ".cache",
 }
@@ -406,13 +406,59 @@ def make_run_id(task: str) -> str:
     return f"{now}-{digest}"
 
 
+def prepare_run_dir(root: Path, out_dir_arg: str | None, run_id: str) -> tuple[Path | None, dict | None]:
+    """Resolve + create the run directory and make it private and discoverable.
+
+    Default is <root>/.ultracode/runs/<id> — inside the writable workspace, NOT under
+    <root>/.codex which Codex makes read-only in workspace-write sandboxes. The dir is
+    chmod 0700 (run artifacts can hold private/business data and must not be world-
+    readable on shared hosts). A <root>/.ultracode/.gitignore ('*') keeps artifacts out
+    of git, and <root>/.ultracode/last_run_dir records the path so the Stop hook can
+    find the run even when --out-dir points elsewhere. Returns (run_dir, None) or
+    (None, error_dict) when the target is not writable.
+    """
+    run_dir = Path(out_dir_arg).resolve() if out_dir_arg else root / ".ultracode" / "runs" / run_id
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        probe = run_dir / ".uc_write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return None, {
+            "ok": False,
+            "error": "run-dir-not-writable",
+            "path": str(run_dir),
+            "hint": ("Run dir not writable. Codex makes the project's .codex/ read-only under the "
+                     "workspace-write sandbox, but the rest of the project is writable. Pass --out-dir "
+                     "to a writable project path NOT under .codex (e.g. --out-dir .ultracode/runs/<id>); "
+                     "if no project path is writable, use a private temp dir from `mktemp -d` (mode 0700) "
+                     "rather than a fixed world-readable /tmp path on shared hosts."),
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        os.chmod(run_dir, 0o700)
+    except OSError:
+        pass
+    try:
+        base = root / ".ultracode"
+        base.mkdir(parents=True, exist_ok=True)
+        os.chmod(base, 0o700)
+        gi = base / ".gitignore"
+        if not gi.exists():
+            gi.write_text("*\n", encoding="utf-8")
+        (base / "last_run_dir").write_text(str(run_dir) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return run_dir, None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Bootstrap Ultracode dynamic workflow artifacts for Codex.")
     parser.add_argument("--workspace", default=".", help="Repository/workspace path.")
     parser.add_argument("--task", required=True, help="User task to plan.")
     parser.add_argument("--mode", default="auto", choices=["auto", "audit", "plan-only", "implementation", "migration", "refactor", "bugfix", "research"], help="Workflow mode.")
     parser.add_argument("--max-workers", type=int, default=16, help="Maximum initial work items / worker cap.")
-    parser.add_argument("--out-dir", default=None, help="Optional output directory for run artifacts. Defaults to .codex/ultracode/runs/<run-id> under repo root.")
+    parser.add_argument("--out-dir", default=None, help="Optional output directory for run artifacts. Defaults to .ultracode/runs/<run-id> under repo root.")
     args = parser.parse_args(argv)
 
     workspace = Path(args.workspace).resolve()
@@ -437,22 +483,11 @@ def main(argv: list[str] | None = None) -> int:
         "git": git_status(root),
     }
     run_id = make_run_id(args.task)
-    run_dir = Path(args.out_dir).resolve() if args.out_dir else root / ".codex" / "ultracode" / "runs" / run_id
-    try:
-        run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "results").mkdir(exist_ok=True)
-        _probe = run_dir / ".uc_write_probe"
-        _probe.write_text("ok", encoding="utf-8")
-        _probe.unlink()
-    except OSError as exc:
-        print(json.dumps({
-            "ok": False,
-            "error": "run-dir-not-writable",
-            "path": str(run_dir),
-            "hint": "The run directory is not writable (often a read-only sandbox). Re-run with escalated/approved file permissions, or pass a writable --out-dir.",
-            "detail": f"{type(exc).__name__}: {exc}",
-        }, ensure_ascii=False))
+    run_dir, err = prepare_run_dir(root, args.out_dir, run_id)
+    if err:
+        print(json.dumps(err, ensure_ascii=False))
         return 3
+    (run_dir / "results").mkdir(exist_ok=True)
 
     items = create_work_items(groups, args.mode, max(4, args.max_workers))
     run_meta = {

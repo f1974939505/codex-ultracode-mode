@@ -7,7 +7,7 @@ Adversarial verification is a falsification pass. It is designed for the failure
 A strict Ultracode run should contain:
 
 ```text
-.codex/ultracode/runs/<run-id>/
+.ultracode/runs/<run-id>/
 ├── verification.json
 ├── verification.md
 ├── adversarial_verification.json
@@ -26,7 +26,7 @@ Run this after ordinary verification:
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --workspace . \
-  --run-dir .codex/ultracode/runs/<run-id> \
+  --run-dir .ultracode/runs/<run-id> \
   --task "<user task>" \
   --strict
 ```

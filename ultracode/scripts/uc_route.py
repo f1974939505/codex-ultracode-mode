@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 EXCLUDE_DIRS = {
-    ".git", ".hg", ".svn", ".codex/ultracode", "node_modules", ".venv", "venv",
+    ".git", ".hg", ".svn", ".codex/ultracode", ".ultracode", "node_modules", ".venv", "venv",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
     "target", ".tox", ".idea", ".vscode", ".next", ".turbo", "coverage", ".cache",
 }
@@ -140,7 +140,7 @@ def task_signals(task: str) -> dict[str, Any]:
     text = task.lower()
     signal_map = {
         "plan_only": ["plan only", "plan-only", "不要修改", "不修改", "只给方案", "提出方案", "plan mode"],
-        "audit": ["audit", "review", "检查", "审阅", "复核", "code review", "安全", "漏洞", "风险"],
+        "audit": ["audit", "review", "assess", "检查", "审查", "审阅", "审计", "评审", "复核", "code review", "安全", "漏洞", "风险"],
         "implementation": ["fix", "implement", "modify", "change", "patch", "write", "update", "修复", "修改", "实现", "改", "补丁"],
         "migration": ["migration", "migrate", "port", "upgrade", "批量", "迁移", "升级", "500 files"],
         "refactor": ["refactor", "restructure", "cleanup", "organize", "重构", "整理", "目录结构", "清理"],
@@ -170,9 +170,20 @@ def infer_route(task: str, files: list[Path], root: Path, commands: list[dict[st
     medium_repo = len(files) > 60 or code_count > 30
     hits = signals["hits"]
 
+    text = task.lower()
     plan_only = "plan_only" in hits
     audit = "audit" in hits
-    impl = "implementation" in hits and not plan_only
+    # Demote weak/hypothetical implementation cues: "实现" in "假设…都已经实现" describes a
+    # hoped-for STATE, not a command to change code, and bare "改"/"write"/"update" are loose.
+    # Only treat the task as implementation when a strong change verb is present, or when it is
+    # neither a hypothetical nor an audit/plan request.
+    impl_hits = signals["hits"].get("implementation", [])
+    strong_impl = {"fix", "implement", "modify", "patch", "修复", "修改", "补丁"}
+    has_strong_impl = any(w in impl_hits for w in strong_impl)
+    hypothetical = any(m in text for m in [
+        "假设", "假定", "已经实现", "已实现", "若实现", "如果实现", "如果都实现", "assuming", "assume ", "expected to be implemented",
+    ])
+    impl = ("implementation" in hits) and not plan_only and (has_strong_impl or (not hypothetical and not audit))
     migration = "migration" in hits
     refactor = "refactor" in hits
     verification = "verification" in hits or impl or migration or refactor or changed_count > 0
@@ -260,6 +271,52 @@ def infer_route(task: str, files: list[Path], root: Path, commands: list[dict[st
     }
 
 
+def prepare_run_dir(root: Path, out_dir_arg: str | None, run_id: str) -> tuple[Path | None, dict | None]:
+    """Resolve + create the run directory and make it private and discoverable.
+
+    Default is <root>/.ultracode/runs/<id> — inside the writable workspace, NOT under
+    <root>/.codex which Codex makes read-only in workspace-write sandboxes. The dir is
+    chmod 0700 (run artifacts can hold private/business data and must not be world-
+    readable on shared hosts). A <root>/.ultracode/.gitignore ('*') keeps artifacts out
+    of git, and <root>/.ultracode/last_run_dir records the path so the Stop hook can
+    find the run even when --out-dir points elsewhere. Returns (run_dir, None) or
+    (None, error_dict) when the target is not writable.
+    """
+    run_dir = Path(out_dir_arg).resolve() if out_dir_arg else root / ".ultracode" / "runs" / run_id
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        probe = run_dir / ".uc_write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return None, {
+            "ok": False,
+            "error": "run-dir-not-writable",
+            "path": str(run_dir),
+            "hint": ("Run dir not writable. Codex makes the project's .codex/ read-only under the "
+                     "workspace-write sandbox, but the rest of the project is writable. Pass --out-dir "
+                     "to a writable project path NOT under .codex (e.g. --out-dir .ultracode/runs/<id>); "
+                     "if no project path is writable, use a private temp dir from `mktemp -d` (mode 0700) "
+                     "rather than a fixed world-readable /tmp path on shared hosts."),
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        os.chmod(run_dir, 0o700)
+    except OSError:
+        pass
+    try:
+        base = root / ".ultracode"
+        base.mkdir(parents=True, exist_ok=True)
+        os.chmod(base, 0o700)
+        gi = base / ".gitignore"
+        if not gi.exists():
+            gi.write_text("*\n", encoding="utf-8")
+        (base / "last_run_dir").write_text(str(run_dir) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return run_dir, None
+
+
 def write_markdown(route: dict[str, Any], out: Path) -> None:
     caps = route["capabilities"]
     lines = [
@@ -309,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Route a $ultracode task before workflow execution.")
     parser.add_argument("--workspace", default=".", help="Workspace/repo path.")
     parser.add_argument("--task", required=True, help="User task after removing the $ultracode token.")
-    parser.add_argument("--out-dir", default=None, help="Optional output directory. Default: .codex/ultracode/runs/<route-id>.")
+    parser.add_argument("--out-dir", default=None, help="Optional output directory. Default: .ultracode/runs/<route-id>.")
     parser.add_argument("--max-files", type=int, default=25000, help="Maximum files to scan.")
     args = parser.parse_args(argv)
 
@@ -320,20 +377,9 @@ def main(argv: list[str] | None = None) -> int:
     git = git_info(root)
     route = infer_route(args.task, files, root, commands, git)
     route_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-route")
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else root / ".codex" / "ultracode" / "runs" / route_id
-    try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        _probe = out_dir / ".uc_write_probe"
-        _probe.write_text("ok", encoding="utf-8")
-        _probe.unlink()
-    except OSError as exc:
-        print(json.dumps({
-            "ok": False,
-            "error": "run-dir-not-writable",
-            "path": str(out_dir),
-            "hint": "The run directory is not writable (often a read-only sandbox). Re-run with escalated/approved file permissions, or pass a writable --out-dir.",
-            "detail": f"{type(exc).__name__}: {exc}",
-        }, ensure_ascii=False))
+    out_dir, err = prepare_run_dir(root, args.out_dir, route_id)
+    if err:
+        print(json.dumps(err, ensure_ascii=False))
         return 3
     route.update({
         "ok": True,

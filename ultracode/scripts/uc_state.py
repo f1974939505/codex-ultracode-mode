@@ -19,7 +19,9 @@ from typing import Any
 def state_path(workspace: Path, global_state: bool) -> Path:
     if global_state:
         return Path.home() / ".codex" / "ultracode" / "state.json"
-    return workspace.resolve() / ".codex" / "ultracode" / "state.json"
+    # Project state lives under .ultracode (writable), not .codex (read-only in the
+    # Codex workspace-write sandbox).
+    return workspace.resolve() / ".ultracode" / "state.json"
 
 
 def load(path: Path) -> dict[str, Any]:

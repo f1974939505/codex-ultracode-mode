@@ -16,7 +16,7 @@ This is not Claude Code's proprietary background JavaScript workflow runtime. It
 - CSV fan-out work-item tables
 - deterministic bootstrap, merge, verification, adversarial verification, state, and install scripts
 - optional Codex hooks for exact `$ultracode` prompt context, subagent schema injection, final-ledger/adversarial nudging, and destructive-command blocking
-- a durable final ledger under `.codex/ultracode/runs/<run-id>/`
+- a durable final ledger under `.ultracode/runs/<run-id>/`
 
 ## One-command install
 
@@ -128,7 +128,7 @@ python3 ~/.codex/skills/ultracode/scripts/uc_bootstrap.py \
 
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_merge_results.py \
-  --run-dir .codex/ultracode/runs/<run-id>
+  --run-dir .ultracode/runs/<run-id>
 ```
 
 7. Run deterministic verification:
@@ -136,7 +136,7 @@ python3 ~/.codex/skills/ultracode/scripts/uc_merge_results.py \
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
-  --run-dir .codex/ultracode/runs/<run-id> \
+  --run-dir .ultracode/runs/<run-id> \
   --execute
 ```
 
@@ -145,7 +145,7 @@ python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --workspace . \
-  --run-dir .codex/ultracode/runs/<run-id> \
+  --run-dir .ultracode/runs/<run-id> \
   --task "<task text after removing $ultracode>" \
   --strict
 ```
@@ -179,7 +179,7 @@ Strict rule: do not present a clean completion when the adversarial gate returns
 | Script | Purpose |
 |---|---|
 | `uc_route.py` | Creates `route.json` and `routing.md` so the current Codex model can choose capabilities before edits/subagents. |
-| `uc_bootstrap.py` | Creates `.codex/ultracode/runs/<run-id>/` with inventory, plan, work-item CSV, spawn prompt, and ledger. |
+| `uc_bootstrap.py` | Creates `.ultracode/runs/<run-id>/` with inventory, plan, work-item CSV, spawn prompt, and ledger. |
 | `uc_merge_results.py` | Merges subagent JSON/Markdown results into `synthesis.md` and `claims.csv`. |
 | `uc_verify.py` | Detects and optionally runs verification commands for Python, Node, Rust, Go, Make, and CMake projects. |
 | `uc_adversarial_verify.py` | Scans diffs, claims, verification gaps, risky patterns, test gaps; creates adversarial gate and worker CSV. |
@@ -201,7 +201,7 @@ Strict rule: do not present a clean completion when the adversarial gate returns
 - `ultracode_claim_checker`
 - `ultracode_edge_tester`
 
-The mapper/reviewer/adversary/claim-checker roles default to read-only discipline. The edge tester may write only temporary probes under `.codex/ultracode/runs/<run-id>/adversarial/` or a temp directory unless explicitly assigned to patch source files.
+The mapper/reviewer/adversary/claim-checker roles default to read-only discipline. The edge tester may write only temporary probes under `.ultracode/runs/<run-id>/adversarial/` or a temp directory unless explicitly assigned to patch source files.
 
 ## Claude Code Ultracode feature parity map
 
@@ -210,7 +210,7 @@ The mapper/reviewer/adversary/claim-checker roles default to read-only disciplin
 | Keyword or `/effort ultracode` causes Claude to decide when workflow is warranted | Explicit skill invocation `$ultracode`; current Codex model performs route before action | Partial equivalent |
 | Claude writes a JavaScript workflow script for the task | `uc_route.py` + `uc_bootstrap.py` generate route, plan, CSV work items, and prompts; Codex still orchestrates turn-by-turn | Approximation |
 | Runtime executes in background while session stays responsive | Codex subagents run explicitly; no separate background JS runtime | Not native |
-| Intermediate results live in script variables rather than conversation context | Results are kept in run artifacts under `.codex/ultracode/runs/<run-id>/` and merged | Partial equivalent |
+| Intermediate results live in script variables rather than conversation context | Results are kept in run artifacts under `.ultracode/runs/<run-id>/` and merged | Partial equivalent |
 | Dozens to hundreds of agents, max 16 concurrent and 1000 total in Claude runtime | Skill caps recommended concurrent workers at <=16 and uses CSV fan-out for batches | Approximation |
 | Workflow can adversarially cross-check findings before reporting | Deterministic adversarial gate + claim/edge/adversary/verifier agents | Strong equivalent for this use case |
 | `/workflows` progress UI, pause/resume/restart/save | Not available in Codex; artifacts are inspectable and rerunnable via scripts | Not native |
@@ -232,6 +232,10 @@ Test the installer separately without writing files:
 ```bash
 bash install_ultracode.sh --dry-run
 ```
+
+## Run artifacts and privacy
+
+Run artifacts (plan, work items, inventory, ledger, synthesis, verification/adversarial reports) are written to `<project>/.ultracode/runs/<run-id>/`. This is **not** under `.codex/`: Codex's `workspace-write` sandbox makes the project's `.codex/` directory read-only, so writing runs there fails (EROFS) — the rest of the workspace is writable. The run directory is created `chmod 0700` (owner-only) so artifacts that can contain private/business data are not world-readable on shared hosts, and `<project>/.ultracode/.gitignore` (`*`) keeps them out of git. `uc_route`/`uc_bootstrap` also write `<project>/.ultracode/last_run_dir` so the Stop hook can find the run even when `--out-dir` redirects it elsewhere. If no project path is writable, pass `--out-dir "$(mktemp -d)"` (mode 0700) rather than a fixed world-readable `/tmp/<name>` path.
 
 ## Limitations
 

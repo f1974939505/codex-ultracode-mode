@@ -181,7 +181,8 @@ def is_dangerous_command(command: str) -> str | None:
 def load_state(cwd: str) -> dict[str, Any]:
     paths = []
     if cwd:
-        paths.append(Path(cwd) / ".codex" / "ultracode" / "state.json")
+        paths.append(Path(cwd) / ".ultracode" / "state.json")
+        paths.append(Path(cwd) / ".codex" / "ultracode" / "state.json")  # legacy
     home = os.environ.get("HOME")
     if home:
         paths.append(Path(home) / ".codex" / "ultracode" / "state.json")
@@ -203,7 +204,7 @@ def handle_user_prompt(event: dict[str, Any]) -> int:
         "$ultracode hook context: the skill is explicitly active. First strip the literal `$ultracode` token "
         "from the user prompt, then let the current Codex model perform a routing pass before edits or subagents. "
         "Run `uc_route.py` to collect signals, read `routing.md`/`route.json`, choose the needed capabilities, "
-        "then bootstrap `.codex/ultracode/runs/<run-id>/`. Do not require suffixes such as strict-runtime, "
+        "then bootstrap `.ultracode/runs/<run-id>/`. Do not require suffixes such as strict-runtime, "
         "adversarial, or verify; route those functions automatically. For nontrivial work, finish with verification, "
         "adversarial gate status, and a final ledger. Do not claim native Claude workflow runtime."
     )
@@ -242,11 +243,25 @@ def _event_cwd(event: dict[str, Any]) -> str:
 
 
 def _latest_run_dir(cwd: str) -> Path | None:
-    base = Path(cwd) / ".codex" / "ultracode" / "runs"
-    if not base.exists():
-        return None
-    runs = sorted(p for p in base.glob("*") if p.is_dir())
-    return runs[-1] if runs else None
+    root = Path(cwd)
+    # 1) Explicit pointer written by uc_route/uc_bootstrap — robust even when the run dir
+    #    was redirected via --out-dir (e.g. a temp dir) outside the scanned roots.
+    pointer = root / ".ultracode" / "last_run_dir"
+    try:
+        if pointer.exists():
+            p = Path(pointer.read_text(encoding="utf-8").strip())
+            if p.is_dir():
+                return p
+    except Exception:
+        pass
+    # 2) Scan known run roots: current (.ultracode/runs) then legacy (.ultracode/runs).
+    for rel in ((".ultracode", "runs"), (".codex", "ultracode", "runs")):
+        base = root.joinpath(*rel)
+        if base.exists():
+            runs = sorted(p for p in base.glob("*") if p.is_dir())
+            if runs:
+                return runs[-1]
+    return None
 
 
 def _nonempty(path: Path) -> bool:
@@ -290,7 +305,9 @@ def _verification_skipped(run_dir: Path | None) -> bool:
 
 
 def _stop_nudge_file(cwd: str) -> Path:
-    return Path(cwd) / ".codex" / "ultracode" / "stop_nudges.json"
+    # Under .ultracode (writable), NOT .codex which Codex makes read-only — otherwise the
+    # counter write fails silently and the escape valve can never release (infinite block).
+    return Path(cwd) / ".ultracode" / "stop_nudges.json"
 
 
 def _bump_stop_nudges(cwd: str) -> int:
@@ -341,7 +358,7 @@ def handle_stop(event: dict[str, Any]) -> int:
         return emit({"continue": True})
     if not _artifacts_present(run_dir):
         problem = ("no non-empty verification.json + adversarial_verification.json were found under "
-                   ".codex/ultracode/runs/. If this task changed code, run uc_verify.py --execute and "
+                   ".ultracode/runs/. If this task changed code, run uc_verify.py --execute and "
                    "uc_adversarial_verify.py. If it is read-only (no code changed) or those scripts cannot "
                    "run in this environment, write a non-empty verification_skip.json (with a \"reason\" and "
                    "what was checked instead) into the run dir to record why — that satisfies this gate")
