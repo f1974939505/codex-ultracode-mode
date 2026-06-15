@@ -131,7 +131,7 @@ python3 ~/.codex/skills/ultracode/scripts/uc_merge_results.py \
   --run-dir .ultracode/runs/<run-id>
 ```
 
-7. Run deterministic verification:
+7. Run deterministic verification (use `--execute` when code changed, `--read-only` for a no-change audit):
 
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
@@ -140,7 +140,7 @@ python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --execute
 ```
 
-8. Run the adversarial gate when routed:
+8. Run the adversarial gate when routed. It is a change review: it scans only the lines the git diff added, so a clean/empty diff (read-only audit) yields `scope: empty-clean` and does not block on pre-existing repo code.
 
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
@@ -181,8 +181,8 @@ Strict rule: do not present a clean completion when the adversarial gate returns
 | `uc_route.py` | Creates `route.json` and `routing.md` so the current Codex model can choose capabilities before edits/subagents. |
 | `uc_bootstrap.py` | Creates `.ultracode/runs/<run-id>/` with inventory, plan, work-item CSV, spawn prompt, and ledger. |
 | `uc_merge_results.py` | Merges subagent JSON/Markdown results into `synthesis.md` and `claims.csv`. |
-| `uc_verify.py` | Detects and optionally runs verification commands for Python, Node, Rust, Go, Make, and CMake projects. |
-| `uc_adversarial_verify.py` | Scans diffs, claims, verification gaps, risky patterns, test gaps; creates adversarial gate and worker CSV. |
+| `uc_verify.py` | Detects and optionally runs verification commands for Python, Node, Rust, Go, Make, and CMake projects. `--read-only` records that project checks are not applicable for a no-change audit. |
+| `uc_adversarial_verify.py` | Change-scoped adversarial gate: reviews only the lines a git diff ADDED (a clean/empty diff has nothing to review); no-git fallback findings are advisory. Scans risky patterns, test gaps, claims, and verification gaps; creates the gate and worker CSV. |
 | `uc_hook_router.py` | Optional hook router for exact `$ultracode` activation context, subagent schema, destructive-command blocking, and final-ledger nudging. |
 | `uc_state.py` | Compatibility state helper; activation remains `$ultracode`. |
 | `uc_check_package.py` | Validates package structure, SKILL.md frontmatter, TOML agents, hook JSON, Python syntax, route script, and hook smoke behavior. |

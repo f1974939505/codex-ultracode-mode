@@ -277,15 +277,39 @@ def _artifacts_present(run_dir: Path | None) -> bool:
     return _nonempty(run_dir / "verification.json") and _nonempty(run_dir / "adversarial_verification.json")
 
 
-def _gate_status(run_dir: Path | None) -> str | None:
+def _gate_info(run_dir: Path | None) -> dict[str, Any] | None:
+    """Return the adversarial gate dict ({status, completion_allowed, ...}) or None."""
     if not run_dir:
         return None
     try:
         data = json.loads((run_dir / "adversarial_verification.json").read_text(encoding="utf-8"))
         gate = data.get("gate") if isinstance(data, dict) else None
-        return str(gate.get("status")) if isinstance(gate, dict) else None
+        return gate if isinstance(gate, dict) else None
     except Exception:
         return None
+
+
+def _run_is_read_only(run_dir: Path | None) -> bool:
+    """True when the run's own metadata marks it read-only (no code change expected)."""
+    if not run_dir:
+        return False
+    try:
+        meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        return bool(meta.get("read_only")) or str(meta.get("mode", "")) in {"audit", "plan-only", "research"}
+    except Exception:
+        return False
+
+
+def _verification_has_failures(run_dir: Path | None) -> bool:
+    """True if verification.json recorded any executed command that did not pass."""
+    if not run_dir:
+        return False
+    try:
+        data = json.loads((run_dir / "verification.json").read_text(encoding="utf-8"))
+        results = data.get("results", []) if isinstance(data, dict) else []
+        return any(isinstance(r, dict) and r.get("status") not in {"pass", None} for r in results)
+    except Exception:
+        return False
 
 
 def _verification_skipped(run_dir: Path | None) -> bool:
@@ -356,15 +380,35 @@ def handle_stop(event: dict[str, Any]) -> int:
     if _verification_skipped(run_dir):
         _reset_stop_nudges(cwd)
         return emit({"continue": True})
-    if not _artifacts_present(run_dir):
+
+    gate = _gate_info(run_dir)
+    read_only = _run_is_read_only(run_dir)
+    if gate is not None:
+        # Trust the gate's own completion decision. A read-only / clean-diff run produces
+        # status=pass (nothing to change-review) and a non-strict warn still allows
+        # completion — only an actual blocking gate (completion_allowed=false) stops here,
+        # so false positives on pre-existing code can no longer force hand-triage.
+        if gate.get("completion_allowed", False):
+            _reset_stop_nudges(cwd)
+            return emit({"continue": True})
+        problem = ("the adversarial gate blocks completion (completion_allowed=false): resolve the "
+                   "blocking findings, or record why they are accepted/not applicable in verification_skip.json")
+    elif read_only:
+        # Read-only audit with no deterministic gate artifact: the change-oriented gate is
+        # not applicable. Accept a durable verification record (verification.json) ONLY when
+        # it reports no failures; otherwise nudge so a failed/empty read-only run is not
+        # silently released.
+        if run_dir and _nonempty(run_dir / "verification.json") and not _verification_has_failures(run_dir):
+            _reset_stop_nudges(cwd)
+            return emit({"continue": True})
+        problem = ("this read-only run recorded no clean verification artifact. Run `uc_verify.py --read-only "
+                   "--run-dir <run>` (or write a non-empty verification_skip.json) so the audit is durable")
+    elif not _artifacts_present(run_dir):
         problem = ("no non-empty verification.json + adversarial_verification.json were found under "
                    ".ultracode/runs/. If this task changed code, run uc_verify.py --execute and "
                    "uc_adversarial_verify.py. If it is read-only (no code changed) or those scripts cannot "
                    "run in this environment, write a non-empty verification_skip.json (with a \"reason\" and "
                    "what was checked instead) into the run dir to record why — that satisfies this gate")
-    elif _gate_status(run_dir) == "fail":
-        problem = ("the adversarial gate status is `fail`; resolve the failing findings, or record why they "
-                   "are accepted/not applicable in verification_skip.json")
     else:
         _reset_stop_nudges(cwd)
         return emit({"continue": True})

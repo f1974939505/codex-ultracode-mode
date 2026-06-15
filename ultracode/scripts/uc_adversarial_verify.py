@@ -67,15 +67,59 @@ CONFIG_NAMES = {
     "CMakeLists.txt", "tox.ini", "pytest.ini", ".pre-commit-config.yaml", "AGENTS.md",
 }
 
-RISK_PATTERNS: list[tuple[str, str, str, str]] = [
-    ("critical", "dangerous-delete", r"\brm\s+-rf\s+(/|~|\$HOME|\*)|shutil\.rmtree\(|\.unlink\(|os\.remove\(", "destructive deletion or broad file removal"),
-    ("high", "silent-exception", r"except\s+Exception\s*:\s*(pass|return\s+None|continue)|bare\s+except|except\s*:\s*(pass|continue)", "silent error suppression hides broken details"),
-    ("high", "test-disabled", r"pytest\.mark\.skip|pytest\.mark\.xfail|\bskip\(|describe\.skip|it\.skip|test\.skip", "test appears disabled or weakened"),
-    ("medium", "placeholder", r"TODO|FIXME|XXX|NotImplemented|raise\s+NotImplementedError|pass\s*(#|$)", "placeholder left in changed code"),
-    ("medium", "broad-success-claim", r"all\s+tests\s+pass|fully\s+verified|完全验证|全部通过|已全部完成|no\s+issues", "strong claim may need executed evidence"),
-    ("medium", "weak-test", r"assert\s+True|expect\(true\)\.toBe\(true\)|console\.log\(|print\(.{0,80}debug", "weak assertion/debug residue"),
-    ("medium", "network-install", r"curl\b.*\|\s*(sh|bash)|wget\b.*\|\s*(sh|bash)|pip\s+install\s+[^\n#]+|npm\s+install\s+[^\n#]+", "network install or pipe-to-shell path needs explicit review"),
-    ("low", "float-exact", r"\b(float|double)\b.*==|==\s*np\.nan|math\.isnan\([^)]*\)\s*==", "numeric exactness/NaN comparison risk"),
+# Path segments and markers that indicate vendored/generated/minified files. These are
+# not hand-written source, so a regex match in them is almost always a false positive
+# (a minified bundle, a copied dependency). Scanned files matching this are skipped.
+GENERATED_DIR_PARTS = {"assets", "vendor", "generated", "min", "minified", "third_party", "thirdparty", "node_modules"}
+
+# Destructive-delete detection. A regex on `rm -rf <anything-with-a-slash>` false-fires on
+# routine cleanup (`rm -rf dist/`), so target danger is judged the way the safety hook does
+# (uc_hook_router._has_dangerous_target): only a real root/home/glob/single-segment-absolute
+# target counts. This also catches GNU long flags and disk-wipe forms a literal regex misses.
+# Note: no trailing \b on the short-flag alt — for combined flags like `-rf` the boundary
+# between `r` and `f` is not a word boundary and would wrongly fail the match. `-R` (capital,
+# valid recursive flag) is covered by [rR].
+_RM_RECURSIVE_RE = re.compile(r"\s-[a-zA-Z]*[rR]|--recursive\b")
+_RM_FORCE_RE = re.compile(r"\s-[a-zA-Z]*[fF]|--force\b")
+_DANGEROUS_TARGET_RE = re.compile(
+    r"(?:^|[\s'\"=(])"
+    r"(?:/|/\*|~/?|\$\{?HOME\}?/?|\*|/[A-Za-z0-9._-]+/?)"
+    r"(?:[\s'\")\\;&|]|$)"
+)
+_RMTREE_LITERAL_RE = re.compile(r"shutil\.rmtree\(\s*['\"](?:/|~)")
+_DISK_DESTROY_RE = re.compile(r"\bmkfs(?:\.[a-z0-9]+)?\b|\bdd\b[^\n]*\bof=/dev/|>\s*/dev/(?:sd|nvme|hd|vd|disk|mmcblk)")
+
+
+def _dangerous_delete(line: str) -> bool:
+    """True if a line performs a genuinely destructive deletion or disk wipe."""
+    if _RMTREE_LITERAL_RE.search(line) or _DISK_DESTROY_RE.search(line):
+        return True
+    if re.search(r"\brm\b", line) and _RM_RECURSIVE_RE.search(line) and _RM_FORCE_RE.search(line):
+        return bool(_DANGEROUS_TARGET_RE.search(line))
+    return False
+
+# Risk patterns are heuristic. The 5th field is the target file class: "code" patterns
+# run only on source/config files (they describe executable-code risk and false-fire in
+# prose/docs), while "any" patterns also run on docs. These intentionally do NOT try to
+# be a linter for the whole repo — they are a CHANGE review. The scanner restricts them
+# to lines a diff actually ADDED whenever a diff exists (see scan_risk_patterns), so a
+# pre-existing risky line that this run did not touch is never reported. The patterns
+# are also deliberately conservative (e.g. dangerous-delete requires a literal root/home/
+# glob target; network-install matches only pipe-to-shell, not documented `npm install`)
+# so they do not fire on test fixtures, install docs, or routine single-file cleanup.
+# Each entry: (severity, kind, matcher, why, targets). `matcher` is a regex string scanned
+# over contiguous added-line blocks (so multi-line forms like a two-line `except:`/`pass`
+# match), OR a callable(line)->bool applied per added line. `targets`: "code" runs only on
+# source/config; "any" also runs on docs.
+RISK_PATTERNS: list[tuple[str, str, Any, str, str]] = [
+    ("critical", "dangerous-delete", _dangerous_delete, "recursive force-delete of a root/home/glob target, or a disk wipe", "code"),
+    ("high", "silent-exception", r"except\s+(Exception\s*)?:\s*\n?\s*(pass|return\s+None|continue)|bare\s+except", "silent error suppression hides broken details", "code"),
+    ("high", "test-disabled", r"pytest\.mark\.skip|pytest\.mark\.xfail|@?unittest\.skip(If|Unless)?\b|\.skipTest\(|describe\.skip\b|it\.skip\b|test\.skip\b|describe\.only\b|it\.only\b|test\.only\b|\bxit\(|\bxdescribe\(|\bt\.Skip\(", "test appears disabled, focused, or weakened", "code"),
+    ("medium", "placeholder", r"\bTODO\b|\bFIXME\b|\bHACK\b|\bXXX\b|raise\s+NotImplemented(Error)?\b|\bNotImplementedError\b", "placeholder/unfinished marker", "any"),
+    ("medium", "weak-test", r"assert\s+True\b|expect\(\s*true\s*\)\.toBe\(\s*true\s*\)|assert\s+1\s*===?\s*1\b", "weak/tautological assertion", "code"),
+    ("low", "debug-residue", r"console\.log\(|console\.debug\(|print\(\s*['\"]?DEBUG|pdb\.set_trace\(|\bdebugger\s*;", "possible debug residue left in changed code", "code"),
+    ("medium", "network-install", r"\b(curl|wget|fetch)\b[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh|dash|ksh|python[0-9.]*)\b", "pipe-to-shell network install needs explicit review", "any"),
+    ("low", "float-exact", r"\b(float|double)\b[^\n=]{0,40}==|==\s*NaN\b|math\.isnan\([^)]*\)\s*==", "numeric exactness / NaN comparison risk", "code"),
 ]
 
 CLAIM_WORDS = [
@@ -91,6 +135,10 @@ class Finding:
     claim: str
     evidence: list[str]
     recommendation: str
+    # advisory findings cannot HARD-FAIL the gate in non-strict mode: they come from a
+    # whole-repo fallback scan (no git diff to attribute them to this run), so they are
+    # surfaced as observations, not as blockers tied to a change.
+    advisory: bool = False
 
 
 def now_utc() -> str:
@@ -130,12 +178,25 @@ def git_available(root: Path) -> bool:
 
 def collect_git_snapshot(root: Path, base: str) -> dict[str, Any]:
     if not git_available(root):
-        return {"available": False, "base": base, "status_short": "", "diff_stat": "", "diff_name_only": [], "diff_unified0": ""}
+        return {"available": False, "base": base, "status_short": "", "diff_stat": "", "diff_name_only": [], "untracked": [], "diff_unified0": ""}
+    # core.quotepath=false: otherwise git C-style-quotes/octal-escapes non-ASCII paths
+    # (CJK/accented/emoji filenames) in BOTH --name-only and --unified output, so the
+    # path never resolves on disk and never matches a parsed diff key -> the file (and any
+    # risky added line in it) silently escapes the scan.
+    qp = ["git", "-c", "core.quotepath=false"]
     _, status = run_cmd(["git", "status", "--short"], root)
-    _, stat = run_cmd(["git", "diff", "--stat", base, "--"], root)
-    _, names = run_cmd(["git", "diff", "--name-only", base, "--"], root)
-    _, staged_names = run_cmd(["git", "diff", "--cached", "--name-only", "--"], root)
-    _, unified = run_cmd(["git", "diff", "--unified=0", base, "--"], root, timeout=30)
+    _, stat = run_cmd(qp + ["diff", "--stat", base, "--"], root)
+    _, names = run_cmd(qp + ["diff", "--name-only", base, "--"], root)
+    _, staged_names = run_cmd(qp + ["diff", "--cached", "--name-only", "--"], root)
+    # Untracked, non-ignored files: a brand-new file is invisible to `git diff` but is a
+    # real change (a very common agent action). Without this, a new file reads as
+    # "nothing changed" (empty-clean) and is never reviewed.
+    _, untracked_raw = run_cmd(qp + ["ls-files", "--others", "--exclude-standard"], root)
+    untracked = sorted({n.strip() for n in untracked_raw.splitlines() if n.strip()})
+    # Unified diff for added-line scoping: union worktree-vs-base and staged, so a change
+    # that lives only in the index (staged then worktree-reverted) is still attributed.
+    _, unified = run_cmd(qp + ["diff", "--unified=0", base, "--"], root, timeout=30)
+    _, unified_cached = run_cmd(qp + ["diff", "--cached", "--unified=0", "--"], root, timeout=30)
     name_list = sorted(set([n.strip() for n in (names + "\n" + staged_names).splitlines() if n.strip()]))
     return {
         "available": True,
@@ -143,13 +204,39 @@ def collect_git_snapshot(root: Path, base: str) -> dict[str, Any]:
         "status_short": status[:20_000],
         "diff_stat": stat[:20_000],
         "diff_name_only": name_list,
-        "diff_unified0": unified[-80_000:],
+        "untracked": untracked,
+        "diff_unified0": (unified + "\n" + unified_cached)[-120_000:],
     }
 
 
-def collect_changed_files(root: Path, git_snapshot: dict[str, Any], explicit_paths: list[str]) -> list[Path]:
-    paths: list[Path] = []
+def _dedupe(paths: list[Path], cap: int = 500) -> list[Path]:
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in paths:
+        rp = p.resolve()
+        if rp not in seen:
+            seen.add(rp)
+            out.append(rp)
+    return out[:cap]
+
+
+def collect_changed_files(root: Path, git_snapshot: dict[str, Any], explicit_paths: list[str]) -> tuple[list[Path], str]:
+    """Resolve the files to change-review and report HOW they were derived (provenance).
+
+    Provenance is what keeps this gate honest:
+      - "explicit"        : caller passed --path; review exactly those.
+      - "diff"            : git available with a non-empty diff; review the changed files.
+      - "empty-clean"     : git available and the diff is EMPTY -> nothing changed, so
+                            there is nothing to change-review. Returns []. This is the fix
+                            for read-only audits: "git available + empty diff" is the
+                            unambiguous signal that the run changed nothing, and must NOT
+                            be conflated with "no diff information available".
+      - "fallback-no-git" : no git AND no --path -> we cannot know what changed, so inspect
+                            a bounded set of files, but the caller marks these findings
+                            advisory (they cannot be attributed to this run).
+    """
     if explicit_paths:
+        paths: list[Path] = []
         for p in explicit_paths:
             candidate = (root / p).resolve()
             if candidate.exists():
@@ -158,56 +245,180 @@ def collect_changed_files(root: Path, git_snapshot: dict[str, Any], explicit_pat
                 elif candidate.is_dir():
                     sub, _ = walk_files(candidate, cap=2000)
                     paths.extend(x for x in sub if not should_skip(x))
-    elif git_snapshot.get("available"):
-        for name in git_snapshot.get("diff_name_only", []):
+        return _dedupe(paths), "explicit"
+
+    if git_snapshot.get("available"):
+        # Tracked diff names UNION untracked (new) files: a new file is a real change.
+        names = list(git_snapshot.get("diff_name_only", [])) + list(git_snapshot.get("untracked", []))
+        if not names:
+            # Clean working tree against base AND no new files: zero change-review scope.
+            return [], "empty-clean"
+        paths = []
+        for name in names:
             p = (root / name).resolve()
             if p.exists() and p.is_file() and not should_skip(p):
                 paths.append(p)
-    if not paths:
-        # Fallback: inspect a bounded set of likely source/config/docs files.
-        all_files, _ = walk_files(root, cap=4000)
-        for p in all_files:
-            if not should_skip(p) and (p.suffix in SOURCE_SUFFIXES or p.suffix in DOC_SUFFIXES or p.name in CONFIG_NAMES):
-                paths.append(p)
-                if len(paths) >= 200:
-                    break
-    seen = set()
-    out = []
-    for p in paths:
-        rp = p.resolve()
-        if rp not in seen:
-            seen.add(rp)
-            out.append(rp)
-    return out[:500]
+        return _dedupe(paths), "diff"
+
+    # No VCS signal at all: bounded advisory scan of likely source/config/docs files.
+    all_files, _ = walk_files(root, cap=4000)
+    fallback: list[Path] = []
+    for p in all_files:
+        if not should_skip(p) and (p.suffix in SOURCE_SUFFIXES or p.suffix in DOC_SUFFIXES or p.name in CONFIG_NAMES):
+            fallback.append(p)
+            if len(fallback) >= 200:
+                break
+    return _dedupe(fallback), "fallback-no-git"
+
+
+def looks_generated(path: Path, text: str) -> bool:
+    """True for vendored/generated/minified files where pattern matches are noise."""
+    name = path.name.lower()
+    if ".min." in name or name.endswith((".min.js", ".min.css", ".bundle.js", ".lock")):
+        return True
+    if any(part.lower() in GENERATED_DIR_PARTS for part in path.parts):
+        return True
+    head = text[:2000]
+    if "@generated" in head or "do not edit" in head.lower():
+        return True
+    # Minified payloads pack everything onto a few very long lines. Use the average line
+    # length, not a single long line — a hand-written file with one long URL/data literal
+    # must NOT be skipped wholesale (that would hide risky lines elsewhere in it).
+    lines = text.split("\n", 200)[:200]
+    if len(lines) >= 3:
+        avg = sum(len(l) for l in lines) / len(lines)
+        if avg > 600:
+            return True
+    return False
+
+
+def _contiguous_blocks(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Group (lineno, text) pairs into (start_lineno, joined_text) runs of CONSECUTIVE
+    line numbers, so a multi-line regex matches within a real contiguous block but cannot
+    bridge two unrelated hunks (which would invent a false adjacency)."""
+    blocks: list[tuple[int, str]] = []
+    run: list[tuple[int, str]] = []
+    prev: int | None = None
+    for ln, text in lines:
+        if prev is not None and ln != prev + 1:
+            blocks.append((run[0][0], "\n".join(t for _, t in run)))
+            run = []
+        run.append((ln, text))
+        prev = ln
+    if run:
+        blocks.append((run[0][0], "\n".join(t for _, t in run)))
+    return blocks
+
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def parse_added_lines(diff_unified0: str) -> dict[str, list[tuple[int, str]]]:
+    """Parse `git diff --unified=0` into {relpath: [(new_line_number, added_text), ...]}.
+
+    Only ADDED lines are returned, with their line number in the new file, so scans can
+    target exactly what the change introduced instead of re-reading whole files.
+    """
+    out: dict[str, list[tuple[int, str]]] = {}
+    current: str | None = None
+    new_lineno = 0
+    for raw in diff_unified0.splitlines():
+        if raw.startswith("+++ "):
+            target = raw[4:].strip()
+            if target == "/dev/null":
+                current = None
+            else:
+                current = target[2:] if target.startswith(("a/", "b/")) else target
+                out.setdefault(current, [])
+            continue
+        if raw.startswith("--- ") or raw.startswith("diff ") or raw.startswith("index "):
+            continue
+        m = _HUNK_RE.match(raw)
+        if m:
+            new_lineno = int(m.group(1))
+            continue
+        if current is None:
+            continue
+        if raw.startswith("+"):
+            out[current].append((new_lineno, raw[1:]))
+            new_lineno += 1
+        elif raw.startswith("-"):
+            # Removed line: does not consume a new-file line number.
+            continue
+    return out
 
 
 def line_number(text: str, idx: int) -> int:
     return text.count("\n", 0, idx) + 1
 
 
-def scan_risk_patterns(root: Path, files: Iterable[Path]) -> list[Finding]:
+def _pattern_applies(targets: str, path: Path) -> bool:
+    """A "code" pattern runs only on source/config; "any" also runs on docs."""
+    is_doc = path.suffix in DOC_SUFFIXES
+    if targets == "any":
+        return True
+    return not is_doc  # "code"
+
+
+def scan_risk_patterns(
+    root: Path,
+    files: Iterable[Path],
+    added_map: dict[str, list[tuple[int, str]]] | None = None,
+    advisory: bool = False,
+) -> list[Finding]:
+    """Scan changed files for risk patterns.
+
+    When `added_map` is provided (a real git diff exists) each pattern is matched ONLY
+    against lines the diff ADDED — so a pre-existing risky line in a touched file, or any
+    untouched file, is never flagged. Without it (explicit --path or no-git fallback) the
+    whole file is scanned and `advisory` should be set for the no-git case.
+    """
     findings: list[Finding] = []
     for path in files:
         if path.suffix not in SOURCE_SUFFIXES and path.suffix not in DOC_SUFFIXES and path.name not in CONFIG_NAMES:
             continue
         text = safe_read(path)
-        if not text:
+        if not text or looks_generated(path, text):
             continue
-        for severity, kind, pattern, why in RISK_PATTERNS:
-            matches = list(re.finditer(pattern, text, flags=re.IGNORECASE | re.MULTILINE))[:8]
-            if not matches:
+        relp = rel(path, root)
+        # Which (line_number, line_text) pairs to scan:
+        #  - diff mode, file in the parsed diff -> only the lines it ADDED.
+        #  - diff mode, file NOT in the diff (a brand-new untracked file) -> whole file is new.
+        #  - whole-file mode (explicit --path / no-git fallback) -> the whole file.
+        if added_map is not None and relp in added_map:
+            scan_lines = added_map[relp]
+            if not scan_lines:
+                continue  # in the diff but only removed lines -> nothing added to review
+        else:
+            scan_lines = list(enumerate(text.splitlines(), start=1))
+        blocks = _contiguous_blocks(scan_lines)
+        grouped: dict[tuple[str, str, str], list[str]] = {}
+
+        def _record(severity: str, kind: str, why: str, ln: int, snippet: str) -> None:
+            bucket = grouped.setdefault((severity, kind, why), [])
+            if len(bucket) < 8:
+                bucket.append(f"{relp}:L{ln}: {snippet.strip()[:180]}")
+
+        for severity, kind, matcher, why, targets in RISK_PATTERNS:
+            if not _pattern_applies(targets, path):
                 continue
-            evidence = []
-            for m in matches:
-                ln = line_number(text, m.start())
-                snippet = text[m.start():m.end()].replace("\n", " ")[:180]
-                evidence.append(f"{rel(path, root)}:L{ln}: {snippet}")
+            if callable(matcher):
+                for ln, line in scan_lines:
+                    if matcher(line):
+                        _record(severity, kind, why, ln, line)
+            else:
+                for start, btext in blocks:
+                    for m in re.finditer(matcher, btext, flags=re.IGNORECASE | re.MULTILINE):
+                        ln = start + btext.count("\n", 0, m.start())
+                        _record(severity, kind, why, ln, m.group(0).replace("\n", " "))
+        for (severity, kind, why), evidence in grouped.items():
             findings.append(Finding(
                 severity=severity,
                 kind=kind,
                 claim=f"Potential {kind}: {why}.",
                 evidence=evidence,
                 recommendation="Review this manually; either justify it in the ledger, remove it, or add targeted verification.",
+                advisory=advisory,
             ))
     return findings
 
@@ -244,7 +455,7 @@ def likely_test_for(source: Path, root: Path, tests: list[Path]) -> list[str]:
     return sorted(set(hits))[:10]
 
 
-def scan_test_gaps(root: Path, changed_files: list[Path], tests: list[Path]) -> list[Finding]:
+def scan_test_gaps(root: Path, changed_files: list[Path], tests: list[Path], advisory: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     changed_sources = [p for p in changed_files if p.suffix in SOURCE_SUFFIXES and not re.search(r"(^|/)(test|tests)(/|$)|test_|_test|\.spec\.|\.test\.", rel(p, root), flags=re.I)]
     if changed_sources and not tests:
@@ -254,6 +465,7 @@ def scan_test_gaps(root: Path, changed_files: list[Path], tests: list[Path]) -> 
             claim="Source files changed or inspected, but no recognizable test files were found.",
             evidence=[rel(p, root) for p in changed_sources[:20]],
             recommendation="Add targeted tests or explicitly document why deterministic tests are unavailable.",
+            advisory=advisory,
         ))
         return findings
     uncovered = []
@@ -268,6 +480,7 @@ def scan_test_gaps(root: Path, changed_files: list[Path], tests: list[Path]) -> 
             claim="Changed source files have no obvious nearby or referencing tests.",
             evidence=uncovered[:30],
             recommendation="Ask an adversarial tester to design counterexamples for these files, or add tests near the changed behavior.",
+            advisory=advisory,
         ))
     return findings
 
@@ -277,6 +490,20 @@ def load_json_file(path: Path) -> Any | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _run_read_only(run_dir: Path | None) -> bool:
+    """True when the run's own metadata marks it read-only (no code change expected).
+
+    Defense in depth: even if the caller forgets --read-only, run.json (written by
+    uc_bootstrap from the route's read_only flag) makes a no-change audit's findings advisory.
+    """
+    if not run_dir:
+        return False
+    meta = load_json_file(run_dir / "run.json")
+    if not isinstance(meta, dict):
+        return False
+    return bool(meta.get("read_only")) or str(meta.get("mode", "")) in {"audit", "plan-only", "research"}
 
 
 def read_run_artifacts(run_dir: Path | None) -> dict[str, Any]:
@@ -322,7 +549,7 @@ def scan_claim_file(root: Path, claim_files: list[Path]) -> list[Finding]:
     return findings
 
 
-def scan_run_artifact_gaps(run_artifacts: dict[str, Any], strict: bool) -> list[Finding]:
+def scan_run_artifact_gaps(run_artifacts: dict[str, Any], strict: bool, has_changes: bool = True) -> list[Finding]:
     findings: list[Finding] = []
     if not run_artifacts.get("available"):
         findings.append(Finding(
@@ -356,8 +583,10 @@ def scan_run_artifact_gaps(run_artifacts: dict[str, Any], strict: bool) -> list[
         scan = verification.get("scan", {}) if isinstance(verification, dict) else {}
         read_only = isinstance(scan, dict) and scan.get("read_only") is True
         detected_cmds = verification.get("commands", []) if isinstance(verification, dict) else []
-        if read_only:
-            pass  # read-only audit: no code changed, so unrun project checks are expected, not a gap.
+        if read_only or not has_changes:
+            # No code changed (read-only audit, or empty/clean diff): the project's own
+            # test/build commands existing-but-unrun is expected, not a gap to block on.
+            pass
         elif verification.get("executed") is not True and detected_cmds:
             findings.append(Finding(
                 severity="medium",
@@ -526,38 +755,67 @@ def severity_rank(sev: str) -> int:
     return {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(sev, 9)
 
 
-def gate_status(findings: list[Finding], strict: bool) -> dict[str, Any]:
-    counts = Counter(f.severity for f in findings)
+def gate_status(findings: list[Finding], strict: bool, provenance: str = "diff") -> dict[str, Any]:
+    """Compute the gate status, separating gating findings from advisory ones.
+
+    A finding is *advisory* when it comes from a whole-repo fallback scan with no git diff
+    to attribute it to this run (provenance "fallback-no-git"). Advisory findings are
+    reported but, in non-strict mode, can only raise the status to "warn" — never "fail" —
+    so a deterministic pattern match on code this run did not change cannot hard-block
+    completion. Run-artifact failures (e.g. a verification command that failed) and
+    findings tied to an actual diff still gate normally.
+    """
+    gating = [f for f in findings if not getattr(f, "advisory", False)]
+    advisory = [f for f in findings if getattr(f, "advisory", False)]
+    counts = Counter(f.severity for f in gating)
+    adv_counts = Counter(f.severity for f in advisory)
     critical_high = counts.get("critical", 0) + counts.get("high", 0)
+    adv_critical_high = adv_counts.get("critical", 0) + adv_counts.get("high", 0)
     if counts.get("critical", 0) > 0:
         status = "fail"
     elif strict and critical_high > 0:
         status = "fail"
-    elif critical_high > 0 or counts.get("medium", 0) > 0:
+    elif strict and adv_critical_high > 0:
+        # Strict mode honors advisory critical/high too (the caller opted into rigor).
+        status = "fail"
+    elif critical_high > 0 or counts.get("medium", 0) > 0 or advisory:
         status = "warn"
     else:
         status = "pass"
     return {
         "status": status,
         "strict": strict,
+        "provenance": provenance,
         "severity_counts": dict(counts),
+        "advisory_counts": dict(adv_counts),
         "completion_allowed": status == "pass" or (status == "warn" and not strict),
-        "rule": "strict fails on any critical/high; non-strict warns unless critical verification failure exists",
+        "rule": "critical (non-advisory) or strict critical/high fails; advisory/fallback findings only warn in non-strict; clean/empty diff has no change-review findings",
     }
 
 
 def write_markdown(path: Path, report: dict[str, Any]) -> None:
     findings = [Finding(**f) for f in report.get("findings", [])]
+    provenance = report.get("scope_provenance", report.get("gate", {}).get("provenance", "diff"))
+    prov_note = {
+        "empty-clean": "git working tree is clean against the diff base — this run changed nothing, so change-review scans were skipped (no findings can be attributed to it).",
+        "diff": "scanned only the lines this run's diff ADDED (pre-existing/untouched code is out of scope).",
+        "explicit": "scanned the explicitly supplied --path targets.",
+        "fallback-no-git": "no git diff available — bounded whole-file scan; these findings are ADVISORY (cannot be attributed to this run) and do not hard-fail the gate in non-strict mode.",
+    }.get(provenance, "")
     lines = [
         f"# Ultracode adversarial verification: {Path(report['run_dir']).name if report.get('run_dir') else 'no-run-dir'}\n\n",
         f"Generated: {report['generated_at_utc']}\n\n",
         f"Workspace: `{report['workspace']}`\n\n",
         f"Gate: `{report['gate']['status']}`; completion_allowed: `{report['gate']['completion_allowed']}`; strict: `{report['gate']['strict']}`\n\n",
+        f"Scope: `{provenance}` — {prov_note}\n\n",
         "## Changed / inspected files\n\n",
     ]
     files = report.get("changed_files", [])
     if not files:
-        lines.append("No changed file list was detected. The script used fallback inspection when possible.\n\n")
+        if provenance == "empty-clean":
+            lines.append("No files changed (clean working tree). Nothing to change-review.\n\n")
+        else:
+            lines.append("No changed file list was detected. The script used fallback inspection when possible.\n\n")
     else:
         for f in files[:120]:
             lines.append(f"- `{f}`\n")
@@ -569,7 +827,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         lines.append("No deterministic adversarial findings. This does not prove correctness; still run the generated adversarial subagent prompt for high-impact changes.\n\n")
     else:
         for f in sorted(findings, key=lambda x: (severity_rank(x.severity), x.kind, x.claim)):
-            lines.append(f"### {f.severity.upper()} — {f.kind}\n\n")
+            adv = " (advisory — pre-existing, no diff to attribute)" if getattr(f, "advisory", False) else ""
+            lines.append(f"### {f.severity.upper()} — {f.kind}{adv}\n\n")
             lines.append(f"{f.claim}\n\n")
             if f.evidence:
                 lines.append("Evidence:\n")
@@ -613,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--path", action="append", default=[], help="Explicit file/dir to inspect. Can be repeated.")
     parser.add_argument("--claim-file", action="append", default=[], help="File containing final claims or answer text. Can be repeated.")
     parser.add_argument("--strict", action="store_true", help="Fail gate on missing verification/adversarial result files or high findings.")
+    parser.add_argument("--read-only", action="store_true", help="Read-only/audit run (this run changes no code): deterministic change-review findings are advisory (warn, never hard-fail) since they cannot be attributed to this run.")
     parser.add_argument("--execute", action="store_true", help="Also execute uc_verify.py --execute before adversarial gate when run-dir is present.")
     parser.add_argument("--timeout", type=int, default=120, help="Per-command timeout for delegated uc_verify.py.")
     args = parser.parse_args(argv)
@@ -656,14 +916,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"uc_verify.py could not run: {type(exc).__name__}: {exc}; continuing to gate.", file=sys.stderr)
 
     git_snapshot = collect_git_snapshot(root, args.base)
-    changed_files = collect_changed_files(root, git_snapshot, args.path)
+    changed_files, provenance = collect_changed_files(root, git_snapshot, args.path)
+    # Real diff -> scan only ADDED lines; no-git fallback -> advisory whole-file scan.
+    added_map = parse_added_lines(git_snapshot.get("diff_unified0", "")) if provenance == "diff" else None
+    # read-only is the run's own metadata (route -> bootstrap run.json) OR the explicit flag.
+    read_only = args.read_only or _run_read_only(run_dir)
+    # Only findings tied to an actual diff on a code-changing run can HARD-FAIL. Everything
+    # else — a no-git fallback, an explicit --path inspection, or any read-only run — is
+    # advisory (surfaced, warns in non-strict, never blocks), because those findings cannot
+    # be attributed to a change THIS run introduced. This is the universal rule that keeps a
+    # read-only audit (even on a dirty tree or via --path) from hard-failing on pre-existing code.
+    advisory = not (provenance == "diff" and not read_only)
+    has_changes = provenance in {"diff", "explicit"} and bool(changed_files)
     tests = find_tests(root)
     run_artifacts = read_run_artifacts(run_dir)
 
     findings: list[Finding] = []
-    findings.extend(scan_risk_patterns(root, changed_files))
-    findings.extend(scan_test_gaps(root, changed_files, tests))
-    findings.extend(scan_run_artifact_gaps(run_artifacts, args.strict))
+    findings.extend(scan_risk_patterns(root, changed_files, added_map=added_map, advisory=advisory))
+    findings.extend(scan_test_gaps(root, changed_files, tests, advisory=advisory))
+    findings.extend(scan_run_artifact_gaps(run_artifacts, args.strict, has_changes=has_changes))
     findings.extend(scan_adversarial_result_content(run_dir, run_artifacts, args.strict))
 
     claim_files = [Path(p).resolve() if Path(p).is_absolute() else (root / p).resolve() for p in args.claim_file]
@@ -674,7 +945,7 @@ def main(argv: list[str] | None = None) -> int:
                 claim_files.append(p)
     findings.extend(scan_claim_file(root, claim_files))
 
-    gate = gate_status(findings, args.strict)
+    gate = gate_status(findings, args.strict, provenance=provenance)
     out_run_dir = run_dir or (root / ".ultracode" / "adversarial-no-run")
     out_run_dir.mkdir(parents=True, exist_ok=True)
     write_adversarial_work_items(out_run_dir, args.task, changed_files, root)
@@ -684,6 +955,7 @@ def main(argv: list[str] | None = None) -> int:
         "workspace": str(root),
         "run_dir": str(out_run_dir),
         "task": args.task,
+        "scope_provenance": provenance,
         "git": git_snapshot,
         "changed_files": [rel(p, root) for p in changed_files],
         "tests_detected": [rel(p, root) for p in tests[:200]],

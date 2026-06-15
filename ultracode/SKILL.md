@@ -201,7 +201,9 @@ When changing code:
 
 ### Phase 7 — Verification and adversarial gate
 
-Detect checks:
+The verification and adversarial layers review what THIS run did. If the route is read-only (`needs_implementation=false` / `read_only=true` — a pure audit, review, research, or plan), no code changed, so there is nothing to execute-verify and nothing to change-review. Do not manufacture either; pass the read-only signal through and let the gate report cleanly.
+
+Detect checks (change task):
 
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
@@ -209,13 +211,22 @@ python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --run-dir .ultracode/runs/<run-id>
 ```
 
-Execute checks only when appropriate for the user permission/sandbox state:
+Execute checks only when code changed and the sandbox/permission state allows it:
 
 ```bash
 python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
   --workspace . \
   --run-dir .ultracode/runs/<run-id> \
   --execute
+```
+
+For a read-only audit, pass `--read-only` instead of `--execute`. This records that the project's own test/build/lint are not applicable (no code changed) rather than leaving them as a "detected but not executed" gap:
+
+```bash
+python3 ~/.codex/skills/ultracode/scripts/uc_verify.py \
+  --workspace . \
+  --run-dir .ultracode/runs/<run-id> \
+  --read-only
 ```
 
 Run the adversarial gate whenever the route selects verification, implementation, migration, refactor, package generation, install scripts, or final-answer claim checking. Use `--strict` for nontrivial modifications, packaging, installers, or migration tasks.
@@ -227,6 +238,15 @@ python3 ~/.codex/skills/ultracode/scripts/uc_adversarial_verify.py \
   --task "<task text after removing $ultracode>" \
   --strict
 ```
+
+For a read-only audit, add `--read-only` (the run also reads `run.json`'s `read_only` flag automatically). The deterministic findings then stay advisory instead of hard-failing on code this run did not author.
+
+The adversarial gate is a CHANGE review, not a whole-repo linter. It scopes itself automatically:
+
+- With a real git diff, it scans **only the lines your change added** (including new/untracked files) — pre-existing or untouched code is out of scope and cannot be flagged.
+- With a clean/empty diff (read-only audit), it has nothing to change-review: it reports `scope: empty-clean`, finds nothing from repo code, and does not block. Do not read its silence as "no risks" — real risks for a read-only audit come from the reviewer/claim-checker subagents, not the deterministic scan.
+- With an explicit `--path`, a no-git fallback, or any read-only run, findings are **advisory** (cannot be attributed to a change this run made) and only `warn`, never hard-fail, in non-strict mode.
+- Known blind spot of added-line scoping: a change that only DELETES a safety guard (leaving the now-dangerous line unchanged) is not detected by the deterministic scan — that is what the reviewer/adversary subagents are for.
 
 The adversarial gate writes:
 
@@ -242,7 +262,7 @@ Spawn adversarial workers from `adversarial_work_items.csv` for nontrivial chang
 - `ultracode_adversary`: checks small details, CLI flags, public contracts, docs, generated artifacts, and install flow.
 - `ultracode_verifier`: audits whether the verification is sufficient.
 
-Do not suppress critical or high adversarial findings. Either fix them, rerun verification, or list them as unresolved with exact evidence. In strict mode, do not present a clean completion if the adversarial gate is `fail`.
+Do not suppress critical or high adversarial findings that are tied to your change. Either fix them, rerun verification, or list them as unresolved with exact evidence. Trust the gate's `completion_allowed`: a `warn` on advisory/pre-existing findings is not a blocker. In strict mode, do not present a clean completion if the gate's `completion_allowed` is `false`.
 
 #### When executable verification is not applicable (read-only audit or unsupported environment)
 

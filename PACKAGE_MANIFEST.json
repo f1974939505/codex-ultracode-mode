@@ -1,17 +1,18 @@
 {
   "name": "ultracode-dynamic-workflow-codex",
-  "version": "3.5.0",
-  "created_at_utc": "2026-06-14T16:06:38.144083+00:00",
+  "version": "3.6.0",
+  "created_at_utc": "2026-06-15T01:43:47.697358+00:00",
   "skill_name": "ultracode",
   "activation": "$ultracode only",
-  "notes": "PACKAGE_MANIFEST.json excludes itself from the file hash list.",
+  "notes": "PACKAGE_MANIFEST.json excludes itself from the file hash list. v3.6.0: change-scoped, provenance-aware adversarial gate (adversarially reviewed) so read-only audits stop failing on pre-existing code while genuinely dangerous added changes still fail.",
   "primary_changes": [
-    "Run artifacts now default to <project>/.ultracode/runs/<id> (writable) instead of <project>/.codex/ultracode/runs/<id> — Codex's workspace-write sandbox makes .codex read-only (verified: .codex EROFS while project root and other dotdirs are writable).",
-    "Run dir created chmod 0700 and <project>/.ultracode/.gitignore '*' written, so artifacts (which can hold private/business data) are owner-only and never committed; fixes the world-readable-/tmp leak on shared hosts.",
-    "uc_route/uc_bootstrap write <project>/.ultracode/last_run_dir; uc_hook_router._latest_run_dir and uc_adversarial_verify auto-discovery read the pointer first (then .ultracode/runs, then legacy .codex/ultracode/runs), so the Stop gate tracks the run even when --out-dir redirects it.",
-    "stop_nudges.json and project state.json moved off read-only .codex to .ultracode (otherwise the Stop escape-valve counter write fails silently -> infinite block).",
-    "Route heuristic no longer mislabels read-only audits as implementation: added 审查/审计/评审/assess to audit keywords and demoted hypothetical 'already implemented' cues.",
-    "uc_verify --read-only skips irrelevant test/lint/build gates for audit tasks; adversarial gate no longer flags 'detected-not-executed' for read-only runs. Reviewer lane tightened to avoid full src/ re-sweep. Sharpened run-dir-not-writable hint."
+    "Adversarial gate is CHANGE-SCOPED and provenance-aware (uc_adversarial_verify.py): git-available+empty-diff -> scope=empty-clean (no whole-repo scan); the root-cause fix for read-only audits failing on pre-existing code.",
+    "Diff mode scans ONLY added lines (parse_added_lines over git diff --unified=0, unioned with --cached) via contiguous-block matching so multi-line forms (two-line except/pass) still match; new/untracked files are unioned into scope and scanned whole; non-ASCII paths handled via core.quotepath=false.",
+    "Only diff findings on a non-read-only run can hard-fail. Explicit --path, no-git fallback, and any read-only run (uc_adversarial_verify --read-only or run.json read_only) are advisory: warn, never block. gate_status separates gating vs advisory and exposes completion_allowed.",
+    "dangerous-delete is now target-aware (_dangerous_delete mirrors the safety hook): rm -rf on a real root/home/glob/single-segment-absolute target, GNU long flags, shutil.rmtree literal root/home, and disk-wipe (mkfs/dd/>/dev) — NOT routine cleanup like rm -rf dist/. test-disabled adds unittest.skip/skipTest/xit/xdescribe/t.Skip; placeholder catches raise NotImplemented; generated/minified files skipped by average-line-length.",
+    "uc_verify.py --read-only and no-change runs suppress 'verification-detected-not-executed'.",
+    "uc_route.py adds a read_only capability flag; uc_bootstrap.py writes read_only into run.json and emits read-only-aware plan phases.",
+    "Stop hook (uc_hook_router.py) trusts gate.completion_allowed and run.json read_only, and only releases a read-only run when verification.json has no failures."
   ],
   "files": [
     {
@@ -21,8 +22,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 12244,
-      "sha256": "5494f19968b42d108884107251a38212c04ace9f112e403deeaad7b981b1f407"
+      "bytes": 12726,
+      "sha256": "0a9e52a48d4ea64cae0ff52d45e43c825efb3ccbf7f67e0b7a30c218f3c55461"
     },
     {
       "path": "agents/ultracode_adversary.toml",
@@ -131,8 +132,8 @@
     },
     {
       "path": "ultracode/SKILL.md",
-      "bytes": 13833,
-      "sha256": "a0df002e4d4ae0b92bc8e8e215f030114a7f2d50e5fca2fe631ced315eaa366d"
+      "bytes": 15947,
+      "sha256": "bf2153a6c55256d1a0630cdc4e06d0d707390b64093188f66571369ab6a45bbb"
     },
     {
       "path": "ultracode/agents/ultracode_adversary.toml",
@@ -211,13 +212,13 @@
     },
     {
       "path": "ultracode/scripts/uc_adversarial_verify.py",
-      "bytes": 34210,
-      "sha256": "6d4fce13d0f5b753bd4a22ff9078472711d70787fa4d9e0b7ef2948e8ffc22f6"
+      "bytes": 49715,
+      "sha256": "582cf15b53bf8caac8147f07c91af144ce809504a1c3d4f14e465f73d528be0b"
     },
     {
       "path": "ultracode/scripts/uc_bootstrap.py",
-      "bytes": 25086,
-      "sha256": "edb0719dea57ace7c2722701c827073e77da27df35a6a1030e07e03eaa781158"
+      "bytes": 26813,
+      "sha256": "b9b16c8648ebbf3184539c2e6013187581882f55d8e068fe6642feda4c042dee"
     },
     {
       "path": "ultracode/scripts/uc_check_package.py",
@@ -226,8 +227,8 @@
     },
     {
       "path": "ultracode/scripts/uc_hook_router.py",
-      "bytes": 15903,
-      "sha256": "cf4041f355633b8c3bd709bfdbf65f38bdd2d5cf239d75c299ae4cfce5c0e914"
+      "bytes": 18211,
+      "sha256": "f927af3574a309610dd85e61190a3f445c182a73bd528fbaf0fcf29127bde999"
     },
     {
       "path": "ultracode/scripts/uc_merge_results.py",
@@ -236,8 +237,8 @@
     },
     {
       "path": "ultracode/scripts/uc_route.py",
-      "bytes": 19130,
-      "sha256": "fa0cdfca17ba728c03b240a33947488b47a283e796d205048e6b217fe3405859"
+      "bytes": 19654,
+      "sha256": "3b1fa05dfc930b6714466e1d3b0948246d78f6e3794e6ce72f05e515600e9de3"
     },
     {
       "path": "ultracode/scripts/uc_state.py",

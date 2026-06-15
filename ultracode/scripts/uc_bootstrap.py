@@ -273,11 +273,11 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def write_plan(run_dir: Path, task: str, mode: str, inventory: dict[str, Any], items: list[dict[str, str]], complexity: dict[str, Any]) -> None:
+def write_plan(run_dir: Path, task: str, mode: str, inventory: dict[str, Any], items: list[dict[str, str]], complexity: dict[str, Any], read_only: bool = False) -> None:
     plan = []
     plan.append(f"# Ultracode run plan: {run_dir.name}\n")
     plan.append(f"Task: {task}\n")
-    plan.append(f"Mode: `{mode}`\n")
+    plan.append(f"Mode: `{mode}`{' (read-only: this run will not change code)' if read_only else ''}\n")
     plan.append(f"Recommended dynamic workflow: `{complexity['recommended']}`; signals: {', '.join(complexity['signals']) or 'none'}\n")
     plan.append("## Repository snapshot\n")
     plan.append(f"- Root: `{inventory['root']}`\n")
@@ -285,16 +285,30 @@ def write_plan(run_dir: Path, task: str, mode: str, inventory: dict[str, Any], i
     plan.append(f"- Dominant languages: {json.dumps(inventory['languages'], ensure_ascii=False)}\n")
     plan.append(f"- Detected docs/configs: {', '.join(inventory['docs']) or 'none'}\n")
     plan.append("## Phases\n")
-    phases = [
-        "0. Bootstrap run artifacts and record scope.",
-        "1. Spawn read-only mapper/doc/test/risk subagents.",
-        "2. Merge reconnaissance and decompose bounded work packages.",
-        "3. Run implementation or audit workers, depending on mode.",
-        "4. Synthesize results and resolve conflicts by evidence quality.",
-        "5. Run deterministic verification and adversarial claim/edge review.",
-        "6. Run uc_adversarial_verify.py, resolve or ledger all high-risk findings.",
-        "7. Update final ledger and answer with scope, changes, verification, adversarial gate, and risks.",
-    ]
+    if read_only:
+        # Read-only/audit/research/plan-only: there is no code change to verify or to
+        # change-review. The verification/adversarial steps are about JUDGEMENT EVIDENCE,
+        # not about gating pre-existing repo code — do not manufacture findings from it.
+        phases = [
+            "0. Bootstrap run artifacts and record scope.",
+            "1. Spawn read-only mapper/doc/test/risk subagents within non-overlapping lanes.",
+            "2. Merge reconnaissance and resolve conflicts by evidence quality.",
+            "3. Run audit/analysis workers; gather concrete evidence for every claim.",
+            "4. Run `uc_verify.py --read-only` (no code changed, so project test/build is not applicable).",
+            "5. Run `uc_adversarial_verify.py` to CLAIM-CHECK the answer. With a clean/empty diff it has nothing to change-review; do NOT treat pre-existing repo patterns as gate failures. Real risks come from the reviewer subagent's findings, not the deterministic scan.",
+            "6. Update final ledger and answer with scope, evidence, verification (read-only), adversarial/claim-gate status, and unresolved risks.",
+        ]
+    else:
+        phases = [
+            "0. Bootstrap run artifacts and record scope.",
+            "1. Spawn read-only mapper/doc/test/risk subagents.",
+            "2. Merge reconnaissance and decompose bounded work packages.",
+            "3. Run implementation workers within bounded packages.",
+            "4. Synthesize results and resolve conflicts by evidence quality.",
+            "5. Run `uc_verify.py --execute` on the changed code.",
+            "6. Run `uc_adversarial_verify.py` (it reviews only the lines your diff added); resolve or ledger all blocking findings.",
+            "7. Update final ledger and answer with scope, changes, verification, adversarial gate, and risks.",
+        ]
     plan.extend(f"- {p}\n" for p in phases)
     plan.append("## Initial work items\n")
     for item in items:
@@ -490,11 +504,16 @@ def main(argv: list[str] | None = None) -> int:
     (run_dir / "results").mkdir(exist_ok=True)
 
     items = create_work_items(groups, args.mode, max(4, args.max_workers))
+    # A read-only run will not change code. Derived from the routed mode so the Stop hook
+    # and adversarial gate can avoid forcing a no-change audit through change-oriented
+    # gating. "auto" is treated as not-read-only (conservative; the gate is correct anyway).
+    read_only = args.mode in {"audit", "plan-only", "research"}
     run_meta = {
         "run_id": run_id,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "task": args.task,
         "mode": args.mode,
+        "read_only": read_only,
         "max_workers": args.max_workers,
         "complexity": complexity,
         "inventory_file": "repo_inventory.json",
@@ -506,7 +525,7 @@ def main(argv: list[str] | None = None) -> int:
     (run_dir / "run.json").write_text(json.dumps(run_meta, ensure_ascii=False, indent=2), encoding="utf-8")
     (run_dir / "repo_inventory.json").write_text(json.dumps(inventory, ensure_ascii=False, indent=2), encoding="utf-8")
     write_csv(run_dir / "work_items.csv", items)
-    write_plan(run_dir, args.task, args.mode, inventory, items, complexity)
+    write_plan(run_dir, args.task, args.mode, inventory, items, complexity, read_only=read_only)
     write_spawn_prompt(run_dir, items)
     write_ledger(run_dir, args.task)
 

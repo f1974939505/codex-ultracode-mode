@@ -232,12 +232,19 @@ def infer_route(task: str, files: list[Path], root: Path, commands: list[dict[st
         subagents.extend(["ultracode_claim_checker", "ultracode_edge_tester", "ultracode_adversary"])
     subagents = sorted(set(subagents), key=subagents.index)
 
+    # read_only is the single downstream signal that THIS run will not change code: no
+    # implementation/migration/refactor was routed. Consumers (uc_bootstrap run.json,
+    # uc_verify --read-only, the Stop hook) use it so a no-change audit is never forced
+    # through change-oriented verification/adversarial gating. It is independent of
+    # whether a pre-existing diff exists — the adversarial gate reviews any diff regardless.
+    read_only = not (impl or migration or refactor)
     capabilities = {
         "needs_repo_mapping": needs_parallel or execution_mode in {"audit", "full", "refactor", "migration"},
         "needs_doc_mapping": doc_count > 0 or config_count > 0 or plan_only or refactor or package_generation,
         "needs_test_mapping": bool(commands) or impl or migration or refactor or verification,
         "needs_parallel_subagents": needs_parallel,
         "needs_implementation": impl or migration or refactor,
+        "read_only": read_only,
         "needs_verification": verification,
         "needs_adversarial_gate": adversarial,
         "needs_claim_checking": adversarial,
