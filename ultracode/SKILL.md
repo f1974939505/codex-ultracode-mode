@@ -48,7 +48,7 @@ python3 ~/.codex/skills/ultracode/scripts/uc_route.py \
   --task "<task text after removing $ultracode>"
 ```
 
-Read the generated `routing.md` and `route.json`. Then the current Codex model must make an explicit routing decision before any edits:
+Read the generated `routing.md` and `route.json`. **You are the authoritative router** (`route_authority: active-model`). The script's keyword `execution_mode` is only a hint computed from EN/zh substrings — it does NOT understand the task. Classify intent from the FULL prompt yourself (any language, synonyms, typos, multi-part asks) and override the heuristic freely. When `route_confidence` is `low` (no keyword matched) on a real codebase, do NOT collapse to `lightweight`; prefer at least a read-only `audit`. Then make an explicit routing decision before any edits:
 
 - `lightweight`: small task; use one direct pass plus verification.
 - `plan-only`: user asked for a plan, no edits.
@@ -263,6 +263,10 @@ Spawn adversarial workers from `adversarial_work_items.csv` for nontrivial chang
 - `ultracode_verifier`: audits whether the verification is sufficient.
 
 Do not suppress critical or high adversarial findings that are tied to your change. Either fix them, rerun verification, or list them as unresolved with exact evidence. Trust the gate's `completion_allowed`: a `warn` on advisory/pre-existing findings is not a blocker. In strict mode, do not present a clean completion if the gate's `completion_allowed` is `false`.
+
+**Ground every external metric.** Any quantitative external claim (GitHub stars/forks/issues/commits, npm/PyPI downloads, version numbers, contributor counts) MUST come from a real fetch in this run — never recalled from memory. Persist the producing command's output into the run dir (e.g. `results/` or an `evidence/` file) and cite the source. The gate runs `unsourced-external-metric`: if a number appears in the final claims with no captured source backing it, it is flagged (and fails the strict gate). If the environment has no network (sandbox/escalation denied), say "could not fetch X" — do not fabricate a value.
+
+**Worker results are trust-but-verify.** A subagent that returns `status=ok`/`verdict=pass` with no evidence or findings is an unvalidated self-report; the gate flags it (`adversarial-result-unsupported`). Require real evidence from judging workers, and re-ground subagent-reported file:line cites before putting them in the final answer.
 
 #### When executable verification is not applicable (read-only audit or unsupported environment)
 

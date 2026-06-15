@@ -86,6 +86,53 @@ def safe_read(path: Path, max_bytes: int = 65536) -> str:
         return ""
 
 
+def extra_ecosystem_commands(root: Path) -> list[dict[str, str]]:
+    """Detect a verification command for build systems beyond the core set so routing does
+    not treat a Gradle/Maven/.NET/PHP/Ruby/plain-pip/Dart/Elixir/Scala/Swift/Deno/Bun repo
+    as having no verifiable checks."""
+    cmds: list[dict[str, str]] = []
+
+    def has(*names: str) -> bool:
+        return any((root / n).exists() for n in names)
+
+    def glob1(pat: str) -> bool:
+        try:
+            return next(root.glob(pat), None) is not None
+        except Exception:
+            return False
+
+    if has("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"):
+        gw = "./gradlew" if (root / "gradlew").exists() else "gradle"
+        cmds.append({"kind": "test", "command": f"{gw} test", "reason": "Gradle build present"})
+    if has("pom.xml"):
+        cmds.append({"kind": "test", "command": "mvn -q -B test", "reason": "pom.xml present"})
+    if glob1("*.sln") or glob1("*.csproj") or glob1("*.fsproj") or glob1("*.vbproj"):
+        cmds.append({"kind": "test", "command": "dotnet test", "reason": ".NET project present"})
+    if has("composer.json"):
+        cmds.append({"kind": "test", "command": "composer test", "reason": "composer.json present"})
+    if has("Gemfile"):
+        if has(".rspec") or (root / "spec").is_dir():
+            cmds.append({"kind": "test", "command": "bundle exec rspec", "reason": "Ruby/RSpec project"})
+        elif has("Rakefile"):
+            cmds.append({"kind": "test", "command": "bundle exec rake test", "reason": "Ruby/Rake project"})
+    if has("setup.py", "setup.cfg", "requirements.txt") and not has("pyproject.toml", "pytest.ini", "tox.ini"):
+        cmds.append({"kind": "test", "command": "python -m pytest -q", "reason": "Python project via setup/requirements"})
+    if has("pubspec.yaml"):
+        flutter = "flutter" in safe_read(root / "pubspec.yaml")
+        cmds.append({"kind": "test", "command": "flutter test" if flutter else "dart test", "reason": "Dart/Flutter project"})
+    if has("mix.exs"):
+        cmds.append({"kind": "test", "command": "mix test", "reason": "mix.exs present"})
+    if has("build.sbt"):
+        cmds.append({"kind": "test", "command": "sbt test", "reason": "build.sbt present"})
+    if has("Package.swift"):
+        cmds.append({"kind": "test", "command": "swift test", "reason": "Package.swift present"})
+    if has("deno.json", "deno.jsonc"):
+        cmds.append({"kind": "test", "command": "deno test", "reason": "Deno project"})
+    if has("bun.lockb", "bunfig.toml"):
+        cmds.append({"kind": "test", "command": "bun test", "reason": "Bun project"})
+    return cmds
+
+
 def detect_commands(root: Path) -> list[dict[str, str]]:
     commands: list[dict[str, str]] = []
     package_json = root / "package.json"
@@ -119,7 +166,15 @@ def detect_commands(root: Path) -> list[dict[str, str]]:
             commands.append({"kind": "lint", "command": "make lint", "reason": "Makefile lint target"})
     if (root / "CMakeLists.txt").exists():
         commands.append({"kind": "build", "command": "cmake --build build", "reason": "CMakeLists.txt present; assumes configured build dir"})
-    return commands
+    commands.extend(extra_ecosystem_commands(root))
+    # Deduplicate by command, preserving order.
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for cmd in commands:
+        if cmd["command"] not in seen:
+            seen.add(cmd["command"])
+            out.append(cmd)
+    return out
 
 
 def git_info(root: Path) -> dict[str, Any]:
@@ -209,6 +264,12 @@ def infer_route(task: str, files: list[Path], root: Path, commands: list[dict[st
         execution_mode = "audit"
     elif medium_repo or changed_count > 3:
         execution_mode = "full"
+    elif signals["count"] == 0 and code_count >= 8:
+        # No intent keyword matched, but there IS real code. The keyword lists are EN/zh-only
+        # and finite, so a miss does NOT mean "trivial" — understeering to lightweight here is
+        # exactly how a risky non-English/synonym task got the minimal path. Default to a SAFE
+        # read-only audit and let the model (the authoritative router) decide from the prompt.
+        execution_mode = "audit"
     else:
         execution_mode = "lightweight"
 
@@ -260,9 +321,17 @@ def infer_route(task: str, files: list[Path], root: Path, commands: list[dict[st
         capabilities["needs_parallel_subagents"] = False
         capabilities["recommended_subagents"] = [a for a in subagents if a in {"ultracode_verifier", "ultracode_claim_checker", "ultracode_adversary"}]
 
+    signal_count = signals["count"]
     return {
         "execution_mode": execution_mode,
         "capabilities": capabilities,
+        # The deterministic keyword classifier is a HINT, not the decision. The active model
+        # is the authoritative router: it must classify intent from the full prompt itself
+        # (any language, synonyms, multi-part asks) and override execution_mode/capabilities,
+        # and must NOT downgrade to lightweight just because no keyword matched.
+        "route_authority": "active-model",
+        "route_confidence": "low" if signal_count == 0 else ("medium" if signal_count <= 1 else "high"),
+        "signal_coverage": "keyword hint, EN/zh substrings only — not authoritative; other languages/synonyms will not match",
         "signals": signals,
         "workspace_stats": {
             "file_count": len(files),
@@ -334,6 +403,13 @@ def write_markdown(route: dict[str, Any], out: Path) -> None:
         f"- execution_mode: `{route['execution_mode']}`",
         f"- max_workers: `{caps['max_workers']}`",
         f"- recommended_subagents: `{', '.join(caps['recommended_subagents']) or 'none'}`",
+        "",
+        "## Routing authority",
+        "",
+        f"- route_authority: `{route.get('route_authority', 'active-model')}` — **you (the active model) are the router.**",
+        f"- route_confidence (keyword heuristic): `{route.get('route_confidence', 'unknown')}`",
+        f"- signal_coverage: {route.get('signal_coverage', '')}",
+        "- Classify the task's intent from the FULL prompt yourself — any language, synonyms, or multi-part asks. The keyword `execution_mode` above is only a hint; override it freely. In particular, do NOT fall back to `lightweight` just because no keyword matched a real codebase; prefer at least a read-only `audit`.",
         "",
         "## Capability flags",
         "",

@@ -176,17 +176,35 @@ def git_available(root: Path) -> bool:
     return code == 0
 
 
+# The well-known empty-tree object: diffing against it makes every tracked/staged file
+# read as fully ADDED. Used when there is no HEAD yet (a fresh `git init` with no commit),
+# where `git diff HEAD` errors and would otherwise be misread as "nothing changed".
+GIT_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def _diff_names(out: str) -> list[str]:
+    """Split git --name-only output into real paths, dropping any error/usage lines that
+    git writes to stderr (captured together) on a bad revision."""
+    bad = ("fatal:", "error:", "warning:", "usage:", "hint:")
+    return [n.strip() for n in out.splitlines() if n.strip() and not n.strip().lower().startswith(bad)]
+
+
 def collect_git_snapshot(root: Path, base: str) -> dict[str, Any]:
     if not git_available(root):
         return {"available": False, "base": base, "status_short": "", "diff_stat": "", "diff_name_only": [], "untracked": [], "diff_unified0": ""}
+    # No-commit repo robustness: if base is HEAD but HEAD does not resolve (no commit yet),
+    # diff against the empty tree so staged/committed files are seen as added instead of the
+    # diff erroring and the run being misread as empty-clean.
+    has_head = run_cmd(["git", "rev-parse", "--verify", "-q", "HEAD"], root)[0] == 0
+    eff_base = base if (base != "HEAD" or has_head) else GIT_EMPTY_TREE
     # core.quotepath=false: otherwise git C-style-quotes/octal-escapes non-ASCII paths
     # (CJK/accented/emoji filenames) in BOTH --name-only and --unified output, so the
     # path never resolves on disk and never matches a parsed diff key -> the file (and any
     # risky added line in it) silently escapes the scan.
     qp = ["git", "-c", "core.quotepath=false"]
     _, status = run_cmd(["git", "status", "--short"], root)
-    _, stat = run_cmd(qp + ["diff", "--stat", base, "--"], root)
-    _, names = run_cmd(qp + ["diff", "--name-only", base, "--"], root)
+    _, stat = run_cmd(qp + ["diff", "--stat", eff_base, "--"], root)
+    _, names = run_cmd(qp + ["diff", "--name-only", eff_base, "--"], root)
     _, staged_names = run_cmd(qp + ["diff", "--cached", "--name-only", "--"], root)
     # Untracked, non-ignored files: a brand-new file is invisible to `git diff` but is a
     # real change (a very common agent action). Without this, a new file reads as
@@ -195,12 +213,13 @@ def collect_git_snapshot(root: Path, base: str) -> dict[str, Any]:
     untracked = sorted({n.strip() for n in untracked_raw.splitlines() if n.strip()})
     # Unified diff for added-line scoping: union worktree-vs-base and staged, so a change
     # that lives only in the index (staged then worktree-reverted) is still attributed.
-    _, unified = run_cmd(qp + ["diff", "--unified=0", base, "--"], root, timeout=30)
+    _, unified = run_cmd(qp + ["diff", "--unified=0", eff_base, "--"], root, timeout=30)
     _, unified_cached = run_cmd(qp + ["diff", "--cached", "--unified=0", "--"], root, timeout=30)
-    name_list = sorted(set([n.strip() for n in (names + "\n" + staged_names).splitlines() if n.strip()]))
+    name_list = sorted(set(_diff_names(names) + _diff_names(staged_names)))
     return {
         "available": True,
-        "base": base,
+        "base": eff_base,
+        "head_present": has_head,
         "status_short": status[:20_000],
         "diff_stat": stat[:20_000],
         "diff_name_only": name_list,
@@ -673,6 +692,24 @@ def scan_adversarial_result_content(run_dir: Path | None, run_artifacts: dict[st
                 or rec.get("evidence")
                 for rec in records
             )
+            # Trust-but-verify: a worker that REPORTS a clean judgment (verdict=pass /
+            # status=ok) but carries no evidence, no findings, and only a trivial summary
+            # is an unvalidated self-report — exactly what lets a worker "pass" the gate
+            # without actually checking. Surface it (always, not only strict) so the gate
+            # is tied to substance, not to a status string the model typed.
+            for rec in records:
+                verdict = str(rec.get("verdict", "")).lower()
+                status = str(rec.get("status", "")).lower()
+                claims_ok = verdict == "pass" or (status == "ok" and verdict in {"", "n/a", "not-applicable"})
+                has_substance = bool(rec.get("evidence")) or bool(rec.get("findings")) or len(str(rec.get("summary", "")).strip()) >= 40
+                if claims_ok and not has_substance:
+                    findings.append(Finding(
+                        severity="high" if strict else "medium",
+                        kind="adversarial-result-unsupported",
+                        claim=f"Worker result `{relp}` reports a clean judgment (status='{status}', verdict='{verdict}') with no evidence, findings, or substantive summary — an unvalidated self-report.",
+                        evidence=[relp],
+                        recommendation="Re-run the worker requiring real evidence, or treat its 'pass' as unverified and do not rely on it.",
+                    ))
         else:
             substantive = len(safe_read(p, max_bytes=20_000).strip()) >= 40
         if strict and not substantive:
@@ -683,6 +720,71 @@ def scan_adversarial_result_content(run_dir: Path | None, run_artifacts: dict[st
                 evidence=[relp],
                 recommendation="Have the adversarial worker emit a real structured result (status + evidence + findings).",
             ))
+    return findings
+
+
+# External quantitative metrics that, if asserted in a final claim, must be backed by a
+# captured source in the run (a fetch output, command result, or worker evidence). Catches
+# laundered/hallucinated traction numbers (e.g. GitHub stars/forks never actually fetched).
+_METRIC_RE = re.compile(
+    r"\b(?:stars?|forks?|watchers?|subscribers?|issues?|contributors?|commits?|downloads?|"
+    r"last[-\s]?month|last[-\s]?week|weekly|monthly|stargazers?|星标|下载量?|提交数?|贡献者)\b[^\n]{0,40}?\d"
+    r"|\d[\d,.]*\s*(?:stars?|forks?|downloads?|commits?|issues?|contributors?|颗?星|次下载|个?提交)",
+    re.IGNORECASE,
+)
+# Inline source tokens that, if on the same line as a metric, count as a cited source.
+_SOURCE_TOKEN_RE = re.compile(r"https?://|github\.com|npmjs|api\.npmjs|\bnpm\b|\bgh\b|\bcurl\b|\bwget\b|git\s+(?:log|rev-list|shortlog)", re.IGNORECASE)
+
+
+def scan_unsourced_metrics(run_dir: Path | None, run_artifacts: dict[str, Any], strict: bool) -> list[Finding]:
+    """Flag external quantitative metrics asserted in the final claims that are NOT backed
+    by any captured source in the run. A number is considered sourced if it appears in a
+    captured artifact (worker results, verification.json, evidence/captured files) OR the
+    claim line carries an inline source token (URL / npm / gh / curl / git log)."""
+    findings: list[Finding] = []
+    if not run_dir:
+        return findings
+    claim_text = (run_artifacts.get("ledger.md") or "") + "\n" + (run_artifacts.get("synthesis.md") or "")
+    if not claim_text.strip():
+        return findings
+    # Corroboration corpus: everything captured in the run EXCEPT the claim surfaces.
+    corpus_parts: list[str] = []
+    try:
+        for sub in ("results", "evidence", "captured"):
+            d = run_dir / sub
+            if d.is_dir():
+                for fp in sorted(d.glob("**/*")):
+                    if fp.is_file():
+                        corpus_parts.append(safe_read(fp, max_bytes=120_000))
+        for name in ("verification.json", "repo_inventory.json"):
+            fp = run_dir / name
+            if fp.exists():
+                corpus_parts.append(safe_read(fp, max_bytes=120_000))
+    except Exception:
+        pass
+    corpus = "\n".join(corpus_parts)
+    unsourced: list[str] = []
+    for i, line in enumerate(claim_text.splitlines(), start=1):
+        if not _METRIC_RE.search(line):
+            continue
+        if _SOURCE_TOKEN_RE.search(line):
+            continue  # cites a source inline
+        numbers = re.findall(r"\d[\d,.]*", line)
+        # A metric line is corroborated only if every salient number appears in the corpus.
+        salient = [n for n in numbers if len(n.replace(",", "").replace(".", "")) >= 1]
+        if salient and all(n in corpus for n in salient):
+            continue
+        unsourced.append(f"L{i}: {line.strip()[:200]}")
+        if len(unsourced) >= 12:
+            break
+    if unsourced:
+        findings.append(Finding(
+            severity="high" if strict else "medium",
+            kind="unsourced-external-metric",
+            claim="External quantitative metrics appear in the final claims with no captured source in the run (no fetch output, command result, or worker evidence backs them).",
+            evidence=unsourced,
+            recommendation="Persist the fetch/command output that produced each metric into the run dir (results/ or evidence/), cite the source inline, or remove/qualify the number as unverified. Do not launder recalled numbers as fetched data.",
+        ))
     return findings
 
 
@@ -936,6 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(scan_test_gaps(root, changed_files, tests, advisory=advisory))
     findings.extend(scan_run_artifact_gaps(run_artifacts, args.strict, has_changes=has_changes))
     findings.extend(scan_adversarial_result_content(run_dir, run_artifacts, args.strict))
+    findings.extend(scan_unsourced_metrics(run_dir, run_artifacts, args.strict))
 
     claim_files = [Path(p).resolve() if Path(p).is_absolute() else (root / p).resolve() for p in args.claim_file]
     if run_dir:

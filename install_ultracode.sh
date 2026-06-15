@@ -32,5 +32,4 @@ Next step inside Codex:
 Review and trust the installed hook definitions. Then invoke by adding exactly this skill mention to a normal task:
   $ultracode <your normal prompt>
 
-No suffix is needed. Do not write `ultracode strict-runtime` or `ultracode adversarial`; the skill routes verification, adversarial review, planning, and subagents automatically.
 EOF2

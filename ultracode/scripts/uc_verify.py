@@ -55,6 +55,53 @@ def safe_read(path: Path, max_bytes: int = 65536) -> str:
         return ""
 
 
+def extra_ecosystem_commands(root: Path) -> list[dict[str, str]]:
+    """Detect a verification command for build systems beyond the core set so the gate is
+    not falsely 'clean' on Gradle/Maven/.NET/PHP/Ruby/plain-pip/Dart/Elixir/Scala/Swift/
+    Deno/Bun repos (where the original detector found nothing and ran no checks)."""
+    cmds: list[dict[str, str]] = []
+
+    def has(*names: str) -> bool:
+        return any((root / n).exists() for n in names)
+
+    def glob1(pat: str) -> bool:
+        try:
+            return next(root.glob(pat), None) is not None
+        except Exception:
+            return False
+
+    if has("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"):
+        gw = "./gradlew" if (root / "gradlew").exists() else "gradle"
+        cmds.append({"kind": "test", "command": f"{gw} test", "reason": "Gradle build present"})
+    if has("pom.xml"):
+        cmds.append({"kind": "test", "command": "mvn -q -B test", "reason": "pom.xml present"})
+    if glob1("*.sln") or glob1("*.csproj") or glob1("*.fsproj") or glob1("*.vbproj"):
+        cmds.append({"kind": "test", "command": "dotnet test", "reason": ".NET project present"})
+    if has("composer.json"):
+        cmds.append({"kind": "test", "command": "composer test", "reason": "composer.json present"})
+    if has("Gemfile"):
+        if has(".rspec") or (root / "spec").is_dir():
+            cmds.append({"kind": "test", "command": "bundle exec rspec", "reason": "Ruby/RSpec project"})
+        elif has("Rakefile"):
+            cmds.append({"kind": "test", "command": "bundle exec rake test", "reason": "Ruby/Rake project"})
+    if has("setup.py", "setup.cfg", "requirements.txt") and not has("pyproject.toml", "pytest.ini", "tox.ini"):
+        cmds.append({"kind": "test", "command": "python -m pytest -q", "reason": "Python project via setup/requirements"})
+    if has("pubspec.yaml"):
+        flutter = "flutter" in safe_read(root / "pubspec.yaml")
+        cmds.append({"kind": "test", "command": "flutter test" if flutter else "dart test", "reason": "Dart/Flutter project"})
+    if has("mix.exs"):
+        cmds.append({"kind": "test", "command": "mix test", "reason": "mix.exs present"})
+    if has("build.sbt"):
+        cmds.append({"kind": "test", "command": "sbt test", "reason": "build.sbt present"})
+    if has("Package.swift"):
+        cmds.append({"kind": "test", "command": "swift test", "reason": "Package.swift present"})
+    if has("deno.json", "deno.jsonc"):
+        cmds.append({"kind": "test", "command": "deno test", "reason": "Deno project"})
+    if has("bun.lockb", "bunfig.toml"):
+        cmds.append({"kind": "test", "command": "bun test", "reason": "Bun project"})
+    return cmds
+
+
 def detect_commands(root: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
     commands: list[dict[str, str]] = []
     scan: dict[str, Any] = {}
@@ -92,6 +139,7 @@ def detect_commands(root: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
             commands.append({"kind": "lint", "command": "make lint", "reason": "Makefile lint target"})
     if (root / "CMakeLists.txt").exists() and (root / "build").exists():
         commands.append({"kind": "build", "command": "cmake --build build", "reason": "CMake build directory present"})
+    commands.extend(extra_ecosystem_commands(root))
     # Deduplicate while preserving order.
     seen = set()
     out = []
